@@ -40,5 +40,5 @@ if __name__ == '__main__':
     binary_search_by_recursion(sequence, target, 0, len(sequence))
 
     #  Multiprocessing
-    cpu_count = cpu_count()
-    multiproc_test(binary_search, list_size, sequence, target, cpu_count)
+    core_count = cpu_count()
+    multiproc_test(binary_search, list_size, sequence, target, core_count)
