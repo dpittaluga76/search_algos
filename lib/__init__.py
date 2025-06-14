@@ -56,7 +56,8 @@ def linear_search(input_list, lookup_value, queue=None):
             if queue is not None:
                 queue.put(index)
             return index
-    queue.put(None)
+    if queue is not None:
+        queue.put(None)
     return None
 
 
@@ -88,7 +89,8 @@ def binary_search(input_list, lookup_value, queue=None):
                 last = middle_item - 1
             else:
                 first = middle_item + 1
-    queue.put(None)
+    if queue is not None:
+        queue.put(None)
     return None
 
 
@@ -161,7 +163,7 @@ def interpolation_search(input_list, lookup_value):
             low = index + 1
         else:
             high = index - 1
-    return -1
+    return None
 
 
 @show_runtime_and_result
@@ -197,7 +199,7 @@ def multiproc_gensample(func, lst_size, cpu_cnt):
             print(lst_size % cpu_cnt)
         else:
             add_remainder = 0
-        proc = Process(target=func, args=(queue1))
+        proc = Process(target=func, args=(queue1,))
         procs.append(proc)
 
     for proc in procs:
