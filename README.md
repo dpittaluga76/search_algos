@@ -27,11 +27,12 @@ python -m pip install .
 search-algos --size 1000 --algorithms binary bisect interpolation
 ```
 
-The default run uses 1,000 elements, four dataset distributions, eleven sequential
+The default run uses 1,000 elements, four dataset distributions, fifteen sequential
 algorithms, 100 queries per batch, one warmup batch, seven measured batches, and
 seed 0. Cyclic garbage collection is disabled during measurements. The radix
-directory is included by default. The four prepared alternatives described
-below, the adversarial dataset, and both multiprocessing modes are opt-in.
+directory and `neighbor_prepared`, `dict_reverse`, `guarded_prepared`, and
+`adaptive_index` are included by default alongside every existing sequential
+algorithm. The adversarial dataset and both multiprocessing modes are opt-in.
 Process startup usually costs much more than a single binary search.
 
 ## Command-line options
@@ -40,7 +41,7 @@ Process startup usually costs much more than a single binary search.
 | --- | --- | --- |
 | `--size`, `--sizes` | One or more nonnegative dataset sizes | `1000` |
 | `--datasets` | One or more of `uniform`, `gapped`, `duplicates`, `skewed`, `adversarial` | All except `adversarial` |
-| `--algorithms` | One or more names from the list below; use `all` alone for all seventeen | Eleven sequential algorithms, including radix |
+| `--algorithms` | One or more names from the list below; use `all` alone for all seventeen | Fifteen sequential algorithms, including radix and the prepared alternatives |
 | `--seed` | Integer random seed | `0` |
 | `--repetitions` | Positive number of measured batches | `7` |
 | `--warmups` | Nonnegative number of discarded warmup batches | `1` |
@@ -87,7 +88,14 @@ directory. Compare lookup costs for an already-prepared index and total costs
 when construction is part of your application. Short query batches may not
 amortize the setup cost.
 
-Compare the prepared alternatives against the existing baselines across regular,
+Run all fifteen sequential algorithms, including the prepared alternatives,
+without specifying `--algorithms`:
+
+```console
+python -m search_algos --size 100000 --datasets uniform gapped duplicates --queries 20000
+```
+
+Compare the prepared alternatives with selected baselines across regular,
 duplicate-heavy, and difficult distributions:
 
 ```console
@@ -247,7 +255,7 @@ outliers can concentrate most values in one bucket and make radix slower than
 full-range bisection. Including it in the default benchmark does not imply a
 universal speedup guarantee.
 
-The four opt-in alternatives expose reusable lookup APIs:
+The four prepared alternatives also expose reusable lookup APIs:
 
 ```python
 from search_algos import (

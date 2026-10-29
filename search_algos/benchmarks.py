@@ -55,19 +55,20 @@ INDEX_ALGORITHMS: dict[str, Callable[[Sequence[int], int], int | None]] = {
     "exponential": exponential_search,
     "jump": jump_search,
 }
-DEFAULT_ALGORITHMS = (*INDEX_ALGORITHMS, "set", "dict", "radix")
 PREPARED_ALGORITHMS: dict[str, Callable[[Sequence[int]], Callable[[int], int | None]]] = {
     "neighbor_prepared": build_neighbor_index,
     "guarded_prepared": build_guarded_index,
     "adaptive_index": build_adaptive_index,
 }
-ALGORITHM_NAMES = (
-    *DEFAULT_ALGORITHMS,
+DEFAULT_ALGORITHMS = (
+    *INDEX_ALGORITHMS,
+    "set",
+    "dict",
+    "radix",
     *PREPARED_ALGORITHMS,
     "dict_reverse",
-    "parallel",
-    "parallel_warm",
 )
+ALGORITHM_NAMES = (*DEFAULT_ALGORITHMS, "parallel", "parallel_warm")
 DEFAULT_DATASETS = ("uniform", "gapped", "duplicates", "skewed")
 DATASET_NAMES = (*DEFAULT_DATASETS, "adversarial")
 

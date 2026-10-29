@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(*ALGORITHM_NAMES, "all"),
         nargs="+",
         default=list(DEFAULT_ALGORITHMS),
-        help="algorithms to measure; defaults include radix; all also includes prepared alternatives and multiprocessing",
+        help="algorithms to measure; defaults include radix and prepared alternatives; all also includes multiprocessing",
     )
     parser.add_argument("--seed", type=int, default=0, help="workload seed")
     parser.add_argument("--repetitions", type=int, default=7, help="measured batches per algorithm")

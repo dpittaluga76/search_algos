@@ -182,39 +182,47 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(parallel["timing_scope"], "batch_with_process_startup")
                 self.assertEqual(parallel["hits"], 2)
 
-    def test_default_algorithms_include_radix_with_the_existing_sequential_algorithms(self):
-        completed = self.run_cli(
-            "--size",
-            "0",
-            "--datasets",
-            "uniform",
-            "--queries",
-            "2",
-            "--repetitions",
-            "1",
-            "--warmups",
-            "0",
-            "--format",
-            "json",
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        algorithms = {row["algorithm"] for row in json.loads(completed.stdout)["results"]}
-        self.assertEqual(
-            algorithms,
-            {
-                "linear",
-                "binary",
-                "bisect",
-                "recursive",
-                "interpolation",
-                "interpolation_hybrid",
-                "exponential",
-                "jump",
-                "set",
-                "dict",
-                "radix",
-            },
-        )
+    def test_default_run_includes_all_sequential_algorithms_once(self):
+        expected = {
+            "linear",
+            "binary",
+            "bisect",
+            "recursive",
+            "interpolation",
+            "interpolation_hybrid",
+            "exponential",
+            "jump",
+            "set",
+            "dict",
+            "radix",
+            *PREPARED_ALGORITHMS,
+        }
+        for script in (False, True):
+            with self.subTest(script=script):
+                completed = self.run_cli(
+                    "--size",
+                    "0",
+                    "10",
+                    "--datasets",
+                    "uniform",
+                    "--queries",
+                    "2",
+                    "--repetitions",
+                    "1",
+                    "--warmups",
+                    "0",
+                    "--format",
+                    "json",
+                    script=script,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                rows = json.loads(completed.stdout)["results"]
+                self.assertEqual(len(rows), 30)
+                self.assertTrue(all(row["status"] == "complete" for row in rows))
+                for size in (0, 10):
+                    algorithms = [row["algorithm"] for row in rows if row["size"] == size]
+                    self.assertEqual(set(algorithms), expected)
+                    self.assertEqual(len(algorithms), len(expected))
 
     def test_radix_exports_and_saved_comparison_preserve_setup_and_result_contract(self):
         arguments = [
@@ -289,8 +297,9 @@ class CliTests(unittest.TestCase):
         help_result = self.run_cli("--help")
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--repetitions", help_result.stdout)
-        self.assertIn("defaults include radix", help_result.stdout)
-        self.assertIn("prepared alternatives", help_result.stdout)
+        self.assertIn(
+            "defaults include radix and prepared alternatives", " ".join(help_result.stdout.split())
+        )
         completed = self.run_cli(*SMALL_RUN)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("lookup IQR", completed.stdout)

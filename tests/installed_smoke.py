@@ -93,12 +93,6 @@ class InstalledWheelTests(unittest.TestCase):
             "10",
             "--datasets",
             "duplicates",
-            "--algorithms",
-            "binary",
-            "set",
-            "dict",
-            "radix",
-            *PREPARED_ALGORITHMS,
             "--queries",
             "4",
             "--repetitions",
@@ -115,7 +109,7 @@ class InstalledWheelTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         report = load_report(report_path)
         self.assertEqual(report["schema_version"], 2)
-        self.assertEqual(len(report["results"]), 16)
+        self.assertEqual(len(report["results"]), 30)
         self.assertTrue(all(row["status"] == "complete" for row in report["results"]))
         radix_rows = [row for row in report["results"] if row["algorithm"] == "radix"]
         self.assertEqual(len(radix_rows), 2)
@@ -135,7 +129,7 @@ class InstalledWheelTests(unittest.TestCase):
                 "compare", str(report_path), str(report_path), "--format", "json", module=True
             )
         )
-        self.assertEqual(len(compared["comparisons"]), 16)
+        self.assertEqual(len(compared["comparisons"]), 30)
         for row in compared["comparisons"]:
             self.assertEqual(row["status"], "compared")
             self.assertEqual(row["speedup"], 1.0)

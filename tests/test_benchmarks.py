@@ -68,7 +68,7 @@ class WorkloadTests(unittest.TestCase):
 
 
 class BenchmarkTests(unittest.TestCase):
-    def test_new_prepared_algorithms_are_opt_in_and_preserve_baselines(self):
+    def test_prepared_algorithms_are_selected_by_default_and_preserve_baselines(self):
         defaults = (
             "linear",
             "binary",
@@ -82,15 +82,18 @@ class BenchmarkTests(unittest.TestCase):
             "dict",
             "radix",
         )
-        self.assertEqual(DEFAULT_ALGORITHMS, defaults)
-        self.assertEqual(BenchmarkConfig().algorithms, defaults)
+        self.assertEqual(DEFAULT_ALGORITHMS[: len(defaults)], defaults)
+        self.assertEqual(set(DEFAULT_ALGORITHMS), set(defaults + NEW_PREPARED_NAMES))
+        self.assertEqual(len(DEFAULT_ALGORITHMS), 15)
+        self.assertEqual(BenchmarkConfig().algorithms, DEFAULT_ALGORITHMS)
+        self.assertEqual(ALGORITHM_NAMES, (*DEFAULT_ALGORITHMS, "parallel", "parallel_warm"))
         self.assertEqual(len(ALGORITHM_NAMES), 17)
         for name in (*defaults, *NEW_PREPARED_NAMES, "parallel", "parallel_warm"):
             with self.subTest(algorithm=name):
                 self.assertEqual(ALGORITHM_NAMES.count(name), 1)
         for name in NEW_PREPARED_NAMES:
             with self.subTest(algorithm=name):
-                self.assertNotIn(name, DEFAULT_ALGORITHMS)
+                self.assertEqual(DEFAULT_ALGORITHMS.count(name), 1)
                 self.assertNotIn(name, INDEX_ALGORITHMS)
                 self.assertEqual(BenchmarkConfig(algorithms=(name,)).algorithms, (name,))
 
@@ -343,7 +346,7 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(row["total_median_ns"], statistics.median(total))
             self.assertGreaterEqual(row["lookup_iqr_ns"], 0)
             self.assertEqual(row["per_query_median_ns"], row["lookup_median_ns"] / 8)
-            if row["algorithm"] not in ("set", "dict", "radix"):
+            if row["algorithm"] in INDEX_ALGORITHMS:
                 self.assertEqual(row["setup_samples_ns"], [0, 0])
             if row["size"] == 0:
                 self.assertEqual(row["actual_hit_rate"], 0)
