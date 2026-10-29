@@ -60,6 +60,7 @@ first matching index or `None`:
 ```python
 from bisect import bisect_left
 
+
 def binary_search_std_lib(input_list, lookup_value):
     index = bisect_left(input_list, lookup_value)
     if index < len(input_list) and input_list[index] == lookup_value:
