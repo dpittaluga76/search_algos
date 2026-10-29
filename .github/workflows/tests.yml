@@ -1,0 +1,33 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install package
+        run: python -m pip install .
+      - name: Run regression tests and doctests
+        run: python -m unittest discover -s tests -v
+      - name: Smoke test installed command and JSON export
+        run: search-algos --size 0 10 --datasets duplicates --algorithms binary set --queries 10 --repetitions 2 --warmups 0 --format json --output benchmark-smoke.json
+      - name: Smoke test module command and CSV export
+        run: python -m lib --size 10 --datasets gapped --algorithms binary parallel --workers 2 --queries 4 --repetitions 1 --warmups 0 --format csv --output benchmark-smoke.csv
+      - name: Verify exported reports
+        run: python -c "import csv, json; from pathlib import Path; report = json.loads(Path('benchmark-smoke.json').read_text(encoding='utf-8')); assert len(report['results']) == 4; rows = list(csv.DictReader(Path('benchmark-smoke.csv').read_text(encoding='utf-8').splitlines())); assert len(rows) == 2"
