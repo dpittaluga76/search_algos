@@ -23,6 +23,7 @@ from search_algos.comparison import compare_reports
 from search_algos.prepared import build_first_index_reversed
 
 NEW_PREPARED_NAMES = ("neighbor_prepared", "dict_reverse", "guarded_prepared", "adaptive_index")
+ALL_PREPARED_NAMES = (*NEW_PREPARED_NAMES, "certified_radix", "landmark_index")
 
 
 class WorkloadTests(unittest.TestCase):
@@ -83,19 +84,31 @@ class BenchmarkTests(unittest.TestCase):
             "radix",
         )
         self.assertEqual(DEFAULT_ALGORITHMS[: len(defaults)], defaults)
-        self.assertEqual(set(DEFAULT_ALGORITHMS), set(defaults + NEW_PREPARED_NAMES))
-        self.assertEqual(len(DEFAULT_ALGORITHMS), 15)
+        self.assertEqual(
+            set(DEFAULT_ALGORITHMS), set(defaults + NEW_PREPARED_NAMES + ("landmark_index",))
+        )
+        self.assertEqual(len(DEFAULT_ALGORITHMS), 16)
         self.assertEqual(BenchmarkConfig().algorithms, DEFAULT_ALGORITHMS)
-        self.assertEqual(ALGORITHM_NAMES, (*DEFAULT_ALGORITHMS, "parallel", "parallel_warm"))
-        self.assertEqual(len(ALGORITHM_NAMES), 17)
-        for name in (*defaults, *NEW_PREPARED_NAMES, "parallel", "parallel_warm"):
+        self.assertEqual(
+            ALGORITHM_NAMES, (*DEFAULT_ALGORITHMS, "certified_radix", "parallel", "parallel_warm")
+        )
+        self.assertEqual(len(ALGORITHM_NAMES), 19)
+        for name in (*defaults, *ALL_PREPARED_NAMES, "parallel", "parallel_warm"):
             with self.subTest(algorithm=name):
                 self.assertEqual(ALGORITHM_NAMES.count(name), 1)
-        for name in NEW_PREPARED_NAMES:
+        for name in (*NEW_PREPARED_NAMES, "landmark_index"):
             with self.subTest(algorithm=name):
                 self.assertEqual(DEFAULT_ALGORITHMS.count(name), 1)
                 self.assertNotIn(name, INDEX_ALGORITHMS)
                 self.assertEqual(BenchmarkConfig(algorithms=(name,)).algorithms, (name,))
+
+    def test_certified_radix_is_opt_in_and_preserves_the_default_selection(self):
+        self.assertIn("certified_radix", PREPARED_ALGORITHMS)
+        self.assertNotIn("certified_radix", INDEX_ALGORITHMS)
+        self.assertNotIn("certified_radix", DEFAULT_ALGORITHMS)
+        self.assertEqual(
+            BenchmarkConfig(algorithms=("certified_radix",)).algorithms, ("certified_radix",)
+        )
 
     def test_radix_is_selected_by_default_and_available_once_in_all(self):
         self.assertIn("radix", ALGORITHM_NAMES)
@@ -106,7 +119,7 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(BenchmarkConfig(algorithms=("radix",)).algorithms, ("radix",))
 
     def test_prepared_benchmarks_validate_all_distributions_and_compare(self):
-        algorithms = ("radix", *NEW_PREPARED_NAMES)
+        algorithms = ("radix", *ALL_PREPARED_NAMES)
         report = run_benchmarks(
             BenchmarkConfig(
                 sizes=(0, 1, 40, 1000),
@@ -204,7 +217,7 @@ class BenchmarkTests(unittest.TestCase):
                 )
 
     def test_new_prepared_build_and_lookup_have_separate_timers_each_batch(self):
-        for algorithm in NEW_PREPARED_NAMES:
+        for algorithm in ALL_PREPARED_NAMES:
             with self.subTest(algorithm=algorithm):
                 original = (
                     build_first_index_reversed
@@ -275,7 +288,7 @@ class BenchmarkTests(unittest.TestCase):
                 self.assertEqual(row["total_median_ns"], 160)
 
     def test_incorrect_new_prepared_lookups_abort_the_benchmark(self):
-        for algorithm in NEW_PREPARED_NAMES:
+        for algorithm in ALL_PREPARED_NAMES:
             replacement = (
                 patch("search_algos.benchmarks.build_first_index_reversed", return_value={})
                 if algorithm == "dict_reverse"
@@ -498,7 +511,7 @@ class BenchmarkTests(unittest.TestCase):
             repetitions=3,
             time_budget=1,
         )
-        for algorithm in ("binary", "radix", *NEW_PREPARED_NAMES):
+        for algorithm in ("binary", "radix", *ALL_PREPARED_NAMES):
             for warmups, status, repetitions in ((0, "incomplete", 1), (1, "skipped", 0)):
                 with self.subTest(algorithm=algorithm, warmups=warmups):
                     with patch("search_algos.benchmarks.perf_counter", side_effect=[0, 2]):

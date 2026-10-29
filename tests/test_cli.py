@@ -13,7 +13,13 @@ from search_algos.benchmarks import ALGORITHM_NAMES
 from search_algos.cli import render_report
 
 ROOT = Path(__file__).resolve().parents[1]
-PREPARED_ALGORITHMS = ("neighbor_prepared", "dict_reverse", "guarded_prepared", "adaptive_index")
+PREPARED_ALGORITHMS = (
+    "neighbor_prepared",
+    "dict_reverse",
+    "guarded_prepared",
+    "adaptive_index",
+    "landmark_index",
+)
 SMALL_RUN = [
     "--size",
     "0",
@@ -172,7 +178,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(len(rows), len(ALGORITHM_NAMES))
                 names = [row["algorithm"] for row in rows]
                 self.assertEqual(len(names), len(set(names)))
-                for algorithm in PREPARED_ALGORITHMS:
+                for algorithm in (*PREPARED_ALGORITHMS, "certified_radix"):
                     self.assertEqual(names.count(algorithm), 1)
                 radix = next(row for row in rows if row["algorithm"] == "radix")
                 self.assertEqual(radix["result_kind"], "first_index")
@@ -182,7 +188,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(parallel["timing_scope"], "batch_with_process_startup")
                 self.assertEqual(parallel["hits"], 2)
 
-    def test_default_run_includes_all_sequential_algorithms_once(self):
+    def test_default_run_preserves_baselines_and_adds_landmark_index(self):
         expected = {
             "linear",
             "binary",
@@ -217,7 +223,7 @@ class CliTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 rows = json.loads(completed.stdout)["results"]
-                self.assertEqual(len(rows), 30)
+                self.assertEqual(len(rows), 32)
                 self.assertTrue(all(row["status"] == "complete" for row in rows))
                 for size in (0, 10):
                     algorithms = [row["algorithm"] for row in rows if row["size"] == size]
@@ -300,6 +306,7 @@ class CliTests(unittest.TestCase):
         self.assertIn(
             "defaults include radix and prepared alternatives", " ".join(help_result.stdout.split())
         )
+        self.assertIn("certified_radix is opt-in", " ".join(help_result.stdout.split()))
         completed = self.run_cli(*SMALL_RUN)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("lookup IQR", completed.stdout)
@@ -316,6 +323,7 @@ class CliTests(unittest.TestCase):
             "bisect",
             "dict",
             *PREPARED_ALGORITHMS,
+            "certified_radix",
             "--queries",
             "6",
             "--repetitions",
@@ -323,7 +331,7 @@ class CliTests(unittest.TestCase):
             "--warmups",
             "1",
         ]
-        expected_algorithms = {"bisect", "dict", *PREPARED_ALGORITHMS}
+        expected_algorithms = {"bisect", "dict", *PREPARED_ALGORITHMS, "certified_radix"}
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "prepared.json"
             for output_format in ("text", "json", "csv"):

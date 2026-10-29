@@ -29,6 +29,8 @@ from .algorithms import (
     jump_search,
     linear_search,
 )
+from .certified import build_certified_radix_index
+from .landmark import build_landmark_index
 from .measurement import gc_policy
 from .metadata import collect_metadata
 from .parallel import ParallelSearchPool, effective_worker_count, parallel_search_many
@@ -59,16 +61,21 @@ PREPARED_ALGORITHMS: dict[str, Callable[[Sequence[int]], Callable[[int], int | N
     "neighbor_prepared": build_neighbor_index,
     "guarded_prepared": build_guarded_index,
     "adaptive_index": build_adaptive_index,
+    "certified_radix": build_certified_radix_index,
+    "landmark_index": build_landmark_index,
 }
 DEFAULT_ALGORITHMS = (
     *INDEX_ALGORITHMS,
     "set",
     "dict",
     "radix",
-    *PREPARED_ALGORITHMS,
+    "neighbor_prepared",
+    "guarded_prepared",
+    "adaptive_index",
     "dict_reverse",
+    "landmark_index",
 )
-ALGORITHM_NAMES = (*DEFAULT_ALGORITHMS, "parallel", "parallel_warm")
+ALGORITHM_NAMES = (*DEFAULT_ALGORITHMS, "certified_radix", "parallel", "parallel_warm")
 DEFAULT_DATASETS = ("uniform", "gapped", "duplicates", "skewed")
 DATASET_NAMES = (*DEFAULT_DATASETS, "adversarial")
 

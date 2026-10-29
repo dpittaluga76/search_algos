@@ -18,7 +18,13 @@ import search_algos
 from search_algos.comparison import load_report
 from search_algos.metadata import collect_metadata
 
-PREPARED_ALGORITHMS = ("neighbor_prepared", "dict_reverse", "guarded_prepared", "adaptive_index")
+PREPARED_ALGORITHMS = (
+    "neighbor_prepared",
+    "dict_reverse",
+    "guarded_prepared",
+    "adaptive_index",
+    "landmark_index",
+)
 
 
 class InstalledWheelTests(unittest.TestCase):
@@ -75,7 +81,13 @@ class InstalledWheelTests(unittest.TestCase):
         self.assertEqual(radix(-3), 0)
         self.assertEqual(radix(2), 2)
         self.assertIsNone(radix(4))
-        for factory_name in ("build_neighbor_index", "build_guarded_index", "build_adaptive_index"):
+        for factory_name in (
+            "build_neighbor_index",
+            "build_guarded_index",
+            "build_adaptive_index",
+            "build_certified_radix_index",
+            "build_landmark_index",
+        ):
             with self.subTest(factory=factory_name):
                 lookup = getattr(search_algos, factory_name)([-3, -3, 2, 2, 8])
                 self.assertEqual(lookup(-3), 0)
@@ -109,7 +121,7 @@ class InstalledWheelTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         report = load_report(report_path)
         self.assertEqual(report["schema_version"], 2)
-        self.assertEqual(len(report["results"]), 30)
+        self.assertEqual(len(report["results"]), 32)
         self.assertTrue(all(row["status"] == "complete" for row in report["results"]))
         radix_rows = [row for row in report["results"] if row["algorithm"] == "radix"]
         self.assertEqual(len(radix_rows), 2)
@@ -129,7 +141,7 @@ class InstalledWheelTests(unittest.TestCase):
                 "compare", str(report_path), str(report_path), "--format", "json", module=True
             )
         )
-        self.assertEqual(len(compared["comparisons"]), 30)
+        self.assertEqual(len(compared["comparisons"]), 32)
         for row in compared["comparisons"]:
             self.assertEqual(row["status"], "compared")
             self.assertEqual(row["speedup"], 1.0)
@@ -146,6 +158,7 @@ class InstalledWheelTests(unittest.TestCase):
             "parallel",
             "parallel_warm",
             *PREPARED_ALGORITHMS,
+            "certified_radix",
             "--workers",
             "2",
             "--queries",
@@ -161,16 +174,23 @@ class InstalledWheelTests(unittest.TestCase):
             module=True,
         )
         rows = list(csv.DictReader(io.StringIO(output)))
-        self.assertEqual(len(rows), 8)
+        self.assertEqual(len(rows), 10)
         by_algorithm = {row["algorithm"]: row for row in rows}
         self.assertEqual(
             set(by_algorithm),
-            {"binary", "radix", "parallel", "parallel_warm", *PREPARED_ALGORITHMS},
+            {
+                "binary",
+                "radix",
+                "parallel",
+                "parallel_warm",
+                *PREPARED_ALGORITHMS,
+                "certified_radix",
+            },
         )
         self.assertEqual(by_algorithm["radix"]["result_kind"], "first_index")
         self.assertEqual(by_algorithm["radix"]["timing_scope"], "lookup_batch")
         self.assertEqual(len(json.loads(by_algorithm["radix"]["setup_samples_ns"])), 1)
-        for algorithm in PREPARED_ALGORITHMS:
+        for algorithm in (*PREPARED_ALGORITHMS, "certified_radix"):
             row = by_algorithm[algorithm]
             self.assertEqual(row["result_kind"], "first_index")
             self.assertEqual(row["timing_scope"], "lookup_batch")

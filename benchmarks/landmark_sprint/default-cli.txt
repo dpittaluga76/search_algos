@@ -1,0 +1,95 @@
+Python 3.11.15 (CPython) | Windows-10-10.0.26300-SP0
+Seed 0 | 7 measured batches | 20000 queries/batch | 1 warmups
+Batch times are milliseconds; IQR is the interquartile range of lookup times.
+Set, dictionary, and radix-directory construction and other index preparation appear under setup; total includes per-batch setup and lookup.
+Cyclic GC during measurement: disabled.
+Rankings compare completed rows within the same workload, result kind, and timing scope.
+
+uniform, size 100000: 10000 hits / 20000 queries
+Workload: c7dd99b09ba5be705f397556b1da017a462daadf000947b09b9440ca92e356ac
+Result: first_index (first matching index or None)
+Timing scope: lookup_batch (sequential lookup; total also includes per-batch setup)
+algorithm              status        setup med   lookup med   lookup IQR    total med     ns/query  vs fastest
+landmark_index         complete       0.023300     2.333200     0.475600     2.356500        116.7       1.00x
+neighbor_prepared      complete       0.001900     2.679400     0.106150     2.681000        134.0       1.14x
+adaptive_index         complete       0.018900     2.682500     0.194400     2.704500        134.1       1.15x
+radix                  complete       0.711100     3.384800     0.275700     4.095900        169.2       1.74x
+guarded_prepared       complete       0.002300     4.902200     0.507200     4.904100        245.1       2.08x
+dict_reverse           complete       3.959200     1.287500     0.533250     5.232500         64.4       2.22x
+bisect                 complete       0.000000     5.854900     0.920050     5.854900        292.7       2.48x
+dict                   complete       5.554900     1.608900     0.147750     7.149400         80.4       3.03x
+interpolation          complete       0.000000     7.350500     2.044400     7.350500        367.5       3.12x
+interpolation_hybrid   complete       0.000000    13.593000     2.820950    13.593000        679.6       5.77x
+exponential            complete       0.000000    15.470200     1.187100    15.470200        773.5       6.56x
+binary                 complete       0.000000    21.812600     1.245300    21.812600       1090.6       9.26x
+recursive              complete       0.000000    39.708300     4.483000    39.708300       1985.4      16.85x
+jump                   complete       0.000000   330.062900    18.385150   330.062900      16503.1     140.06x
+linear                 skipped               -            -            -            -            -         n/a
+  linear: estimated work 16000000000 exceeds max_linear_work 50000000; use --max-linear-work 0 to disable this limit (0 measured batches completed)
+
+uniform, size 100000: 10000 hits / 20000 queries
+Workload: c7dd99b09ba5be705f397556b1da017a462daadf000947b09b9440ca92e356ac
+Result: membership (whether the target is present (True/False))
+Timing scope: lookup_batch (sequential lookup; total also includes per-batch setup)
+algorithm              status        setup med   lookup med   lookup IQR    total med     ns/query  vs fastest
+set                    complete       1.509000     1.217900     0.465950     2.754200         60.9       1.00x
+
+gapped, size 100000: 10000 hits / 20000 queries
+Workload: 5346ff1822ffb6f1d0867a5f09cc0aa6297f2c516940c6f1e59bc5a537b0537c
+Result: first_index (first matching index or None)
+Timing scope: lookup_batch (sequential lookup; total also includes per-batch setup)
+algorithm              status        setup med   lookup med   lookup IQR    total med     ns/query  vs fastest
+landmark_index         complete       0.334200     4.077100     0.272450     4.437800        203.9       1.00x
+radix                  complete       0.914300     3.690600     0.202900     4.698600        184.5       1.06x
+adaptive_index         complete       0.919500     3.832000     0.371650     4.720500        191.6       1.06x
+guarded_prepared       complete       0.001900     4.822300     0.395750     4.824900        241.1       1.09x
+bisect                 complete       0.000000     6.175900     0.470750     6.175900        308.8       1.39x
+neighbor_prepared      complete       0.002000     7.322700     0.548200     7.324500        366.1       1.65x
+dict_reverse           complete       6.635200     1.308700     0.138550     8.094400         65.4       1.82x
+dict                   complete       8.465200     1.586400     0.172050    10.009300         79.3       2.26x
+exponential            complete       0.000000    15.308100     0.402700    15.308100        765.4       3.45x
+interpolation          complete       0.000000    20.922800     3.078100    20.922800       1046.1       4.71x
+binary                 complete       0.000000    23.173200     0.843950    23.173200       1158.7       5.22x
+interpolation_hybrid   complete       0.000000    23.570400     1.043500    23.570400       1178.5       5.31x
+recursive              complete       0.000000    38.805500     0.788200    38.805500       1940.3       8.74x
+jump                   complete       0.000000   362.973700     5.621600   362.973700      18148.7      81.79x
+linear                 skipped               -            -            -            -            -         n/a
+  linear: estimated work 16000000000 exceeds max_linear_work 50000000; use --max-linear-work 0 to disable this limit (0 measured batches completed)
+
+gapped, size 100000: 10000 hits / 20000 queries
+Workload: 5346ff1822ffb6f1d0867a5f09cc0aa6297f2c516940c6f1e59bc5a537b0537c
+Result: membership (whether the target is present (True/False))
+Timing scope: lookup_batch (sequential lookup; total also includes per-batch setup)
+algorithm              status        setup med   lookup med   lookup IQR    total med     ns/query  vs fastest
+set                    complete       3.757800     0.904800     0.146850     4.730000         45.2       1.00x
+
+duplicates, size 100000: 10000 hits / 20000 queries
+Workload: 0f69598ffd25e77ec043faf16e0f2ad6f762b561a4ebd67d06bcfbb20d9a86c6
+Result: first_index (first matching index or None)
+Timing scope: lookup_batch (sequential lookup; total also includes per-batch setup)
+algorithm              status        setup med   lookup med   lookup IQR    total med     ns/query  vs fastest
+landmark_index         complete       1.197100     0.677600     0.007400     1.872400         33.9       1.00x
+adaptive_index         complete       2.683900     0.702700     0.022800     3.377700         35.1       1.80x
+dict_reverse           complete       2.808100     0.716900     0.072400     3.611300         35.8       1.93x
+radix                  complete       0.621700     3.627700     0.093350     4.251300        181.4       2.27x
+guarded_prepared       complete       0.001700     4.821300     0.017250     4.822700        241.1       2.58x
+dict                   complete       4.297400     0.814100     0.099050     5.111500         40.7       2.73x
+bisect                 complete       0.000000     5.840200     0.315500     5.840200        292.0       3.12x
+neighbor_prepared      complete       0.001800     6.588600     0.379800     6.590300        329.4       3.52x
+exponential            complete       0.000000    15.171300     0.190050    15.171300        758.6       8.10x
+binary                 complete       0.000000    21.754500     0.836850    21.754500       1087.7      11.62x
+recursive              complete       0.000000    38.276400     1.428350    38.276400       1913.8      20.44x
+interpolation          complete       0.000000    42.171000     0.421200    42.171000       2108.6      22.52x
+interpolation_hybrid   complete       0.000000    44.327700     1.665450    44.327700       2216.4      23.67x
+jump                   complete       0.000000   349.325700     2.931050   349.325700      17466.3     186.57x
+linear                 skipped               -            -            -            -            -         n/a
+  linear: estimated work 16000000000 exceeds max_linear_work 50000000; use --max-linear-work 0 to disable this limit (0 measured batches completed)
+
+duplicates, size 100000: 10000 hits / 20000 queries
+Workload: 0f69598ffd25e77ec043faf16e0f2ad6f762b561a4ebd67d06bcfbb20d9a86c6
+Result: membership (whether the target is present (True/False))
+Timing scope: lookup_batch (sequential lookup; total also includes per-batch setup)
+algorithm              status        setup med   lookup med   lookup IQR    total med     ns/query  vs fastest
+set                    complete       1.605200     0.781800     0.071900     2.305600         39.1       1.00x
+
+ns/query is amortized lookup time. Rows rank by total median within each table; vs fastest is total / fastest complete total in that table (1.00x is fastest). Incomplete/skipped rows are not ranked. JSON/CSV include raw samples and workload IDs.

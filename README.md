@@ -27,12 +27,13 @@ python -m pip install .
 search-algos --size 1000 --algorithms binary bisect interpolation
 ```
 
-The default run uses 1,000 elements, four dataset distributions, fifteen sequential
+The default run uses 1,000 elements, four dataset distributions, sixteen sequential
 algorithms, 100 queries per batch, one warmup batch, seven measured batches, and
 seed 0. Cyclic garbage collection is disabled during measurements. The radix
-directory and `neighbor_prepared`, `dict_reverse`, `guarded_prepared`, and
-`adaptive_index` are included by default alongside every existing sequential
-algorithm. The adversarial dataset and both multiprocessing modes are opt-in.
+directory and `neighbor_prepared`, `dict_reverse`, `guarded_prepared`,
+`adaptive_index`, and `landmark_index` are included by default alongside the original sequential
+algorithms. `certified_radix`, the adversarial dataset, and both multiprocessing
+modes are opt-in.
 Process startup usually costs much more than a single binary search.
 
 ## BISECT
@@ -70,7 +71,7 @@ def binary_search_std_lib(input_list, lookup_value):
 
 ### Interactive example
 
-[Open the bisect walkthrough](https://search-lab-bisect.dpittaluga.chatgpt.site/#/examples/bisect-left)
+[Open the bisect walkthrough](https://search-lab-python.dpittaluga.chatgpt.site/#/examples/bisect-left)
 in Search Lab, with step controls, playback, custom targets, synchronized Python
 code highlighting, and a copyable Python example. The public example library
 includes both bisect and radix.
@@ -111,7 +112,7 @@ for the configuration, complexity, and input requirements.
 
 ### Interactive example
 
-[Open the radix walkthrough](https://search-lab-bisect.dpittaluga.chatgpt.site/#/examples/radix)
+[Open the radix walkthrough](https://search-lab-python.dpittaluga.chatgpt.site/#/examples/radix)
 in Search Lab to step through directory preparation, target routing, and the
 bounded bisect search. Switch between **Preparation** and **Lookup**, change the
 directory bits, or try custom targets. Changing the target reuses the directory;
@@ -148,7 +149,7 @@ and end indices are both `4`.
 | --- | --- | --- |
 | `--size`, `--sizes` | One or more nonnegative dataset sizes | `1000` |
 | `--datasets` | One or more of `uniform`, `gapped`, `duplicates`, `skewed`, `adversarial` | All except `adversarial` |
-| `--algorithms` | One or more names from the list below; use `all` alone for all seventeen | Fifteen sequential algorithms, including radix and the prepared alternatives |
+| `--algorithms` | One or more names from the list below; use `all` alone for all nineteen | Sixteen sequential algorithms, including radix, the original prepared alternatives, and landmark_index |
 | `--seed` | Integer random seed | `0` |
 | `--repetitions` | Positive number of measured batches | `7` |
 | `--warmups` | Nonnegative number of discarded warmup batches | `1` |
@@ -167,7 +168,9 @@ counts are rounded to a whole number of queries. Worker counts are capped by
 the number of elements, and by 61 on Windows. Algorithm names are `linear`,
 `binary`, `bisect`, `recursive`, `interpolation`, `interpolation_hybrid`,
 `exponential`, `jump`, `set`, `dict`, `radix`, `neighbor_prepared`, `dict_reverse`,
-`guarded_prepared`, `adaptive_index`, `parallel`, and `parallel_warm`.
+`guarded_prepared`, `adaptive_index`, `landmark_index`, `certified_radix`, `parallel`, and
+`parallel_warm`. The experimental `certified_radix` strategy is opt-in; select
+it explicitly or use `--algorithms all`. All original default entries are retained, with `landmark_index` added.
 
 The work limit prevents unexpectedly expensive linear scans before they start.
 The time budget includes warmups and is checked between batches: it cannot
@@ -195,7 +198,7 @@ directory. Compare lookup costs for an already-prepared index and total costs
 when construction is part of your application. Short query batches may not
 amortize the setup cost.
 
-Run all fifteen sequential algorithms, including the prepared alternatives,
+Run the sixteen default sequential algorithms, including the prepared alternatives,
 without specifying `--algorithms`:
 
 ```console
@@ -206,7 +209,7 @@ Compare the prepared alternatives with selected baselines across regular,
 duplicate-heavy, and difficult distributions:
 
 ```console
-python -m search_algos --size 100000 --datasets uniform gapped duplicates skewed adversarial --algorithms bisect dict radix neighbor_prepared dict_reverse guarded_prepared adaptive_index --queries 20000 --seed 42
+python -m search_algos --size 100000 --datasets uniform gapped duplicates skewed adversarial --algorithms bisect dict radix neighbor_prepared dict_reverse guarded_prepared adaptive_index certified_radix landmark_index --queries 20000 --seed 42
 ```
 
 The new names select separate strategies; the original `bisect`, `dict`,
@@ -301,13 +304,18 @@ assert find_by_sets(values, 9) is False
 | `build_first_index` | Iterable of hashable values; sorting is unnecessary | Dictionary mapping each value to its first index |
 | `find_by_dict` | Iterable of hashable values and a hashable target | First matching index, or `None`; builds an index for this call |
 | `build_radix_index` | Ascending sorted integer sequence, unchanged while the index is in use; integer targets | Reusable callable returning the first matching index, or `None` |
+| `build_landmark_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable choosing stride prediction, duplicate-run indexing, or a compact radix directory; returns the first index or `None` |
+| `build_certified_radix_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable selecting exact representations per radix bucket, with a bounded bisection fallback |
 | `build_neighbor_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable using one interpolation prediction, exact neighbor checks, and a bisection fallback |
 | `build_first_index_reversed` | Iterable of hashable values; sorting is unnecessary | Dictionary mapping each value to its first index, constructed by traversing backwards |
 | `build_guarded_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable rejecting out-of-range targets before full-range bisection |
 | `build_adaptive_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable choosing one exact lookup strategy during preparation |
 
-Sorted-input requirements are preconditions: the functions do not sort or scan
-the input to validate ordering, since that would change the cost being measured.
+Sorted-input requirements are preconditions: the functions do not sort the input
+or perform a separate ordering-validation pass. For nonconstant input,
+`build_certified_radix_index` scans the values to verify the local properties
+needed by its shortcuts; this preparation is included in its setup measurement.
+This scan does not validate the sorted-integer input contract.
 Use the two-argument recursive search API to let it manage its bounds. Explicit
 `left` and `right` bounds remain available; `right` is inclusive and both bounds
 must describe a valid search range. Within a bounded search, the result is the
@@ -324,7 +332,7 @@ assert index.get(3) == 0
 assert index.get(9) is None
 ```
 
-The benchmark's `set`, `dict`, `radix`, and four prepared-alternative rows measure
+The benchmark's `set`, `dict`, `radix`, and prepared-alternative rows measure
 construction or preparation separately from the subsequent query batch. Every
 prepared alternative returns first indices, matching the other index-search
 algorithms.
@@ -362,7 +370,121 @@ outliers can concentrate most values in one bucket and make radix slower than
 full-range bisection. Including it in the default benchmark does not imply a
 universal speedup guarantee.
 
-The four prepared alternatives also expose reusable lookup APIs:
+### Landmark hybrid
+
+`landmark_index` / `build_landmark_index` is a separate experimental hybrid,
+included in the default CLI run while retaining every existing algorithm.
+Preparation uses a small sample to choose one exact search strategy:
+
+- Duplicate-rich samples select a dictionary built by recording a run's first
+  index and using `bisect_right` to jump over its remaining duplicates.
+- A positive integer stride suggested by the endpoints selects a cheap position
+  prediction. Each query verifies the candidate and adjacent values, or falls
+  back to bounded bisection; endpoint regularity is never assumed to prove the
+  interior values are regularly spaced.
+- Other inputs use a compact radix directory with 1,024 possible buckets and
+  bounded C bisection.
+
+After `max(128, 2*n // n.bit_length())` distinct runs, an incomplete run map is
+discarded and preparation falls back to the directory. This bounds wasted
+run-search comparisons asymptotically by O(n) for misleading samples. Selection
+changes performance only. All branches preserve the first original index,
+including variable duplicate runs, negative values, and arbitrary-size integers.
+The sorted integer input must remain unchanged while the index is reused.
+The stride path needs O(1) preparation; successful run indexing uses O(u log n)
+comparisons and O(u) space for `u` distinct keys; directory preparation uses
+O(B log n) comparisons and O(B) space for at most 1,024 buckets. Stride and
+directory queries have O(log n) worst-case comparison cost; completed run maps
+use expected constant-time dictionary lookup. Arbitrary-size integer arithmetic
+and hashing add operand-size costs. Preparation is timed separately from lookup,
+and both contribute to total time.
+
+```python
+from search_algos import build_landmark_index
+
+lookup = build_landmark_index([-4, -4, 1, 9])
+assert lookup(-4) == 0
+assert lookup(2) is None
+```
+
+This is a new combination in this repository of established techniques, not a
+claim of a new theoretical algorithm or a guaranteed ranking on other machines.
+
+The [landmark benchmark study](benchmarks/landmark_sprint/README.md) records the
+initial results, noisy runs, and longer confirmation measurements. For the
+requested 100,000-value/20,000-query workload, the confirmation aggregate ranked
+first on uniform and duplicates and second on gapped; individual gapped runs
+varied. Reproduce both stages from the checkout:
+
+```console
+python -m scripts.benchmark_landmark
+python -m scripts.confirm_landmark
+```
+
+### Certified radix buckets
+
+`certified_radix` / `build_certified_radix_index` is an additional experimental
+strategy. It uses the same radix partitioning rule as `radix`, then scans
+nonconstant input to verify which exact representation can be used in each
+bucket. Empty and constant input use constant-cost shortcuts.
+
+| Bucket contents | Lookup |
+| --- | --- |
+| Empty | Return `None` |
+| One distinct value, including a duplicate run | Compare once and return its first index |
+| Distinct values form an arithmetic progression | Use integer division and remainder to check membership and calculate the distinct-key rank |
+| Irregular values with `maximum - minimum + 1 <= 256` | Check a membership bit mask, then count preceding set bits to calculate rank |
+| Other contents | Run `bisect_left` within the bucket |
+
+Progressions are verified across all distinct values, rather than inferred
+from the endpoints or a sample. Duplicate progressions and bitmap buckets keep
+the original first index for each distinct value; a duplicate-free progression
+can calculate its original index directly. Every mode returns the first
+matching index, or `None` for an absent value. The source sequence stays in place.
+
+```python
+from search_algos import build_certified_radix_index
+
+values = (20, 23, 23, 26)
+lookup = build_certified_radix_index(values, bits=0)
+assert lookup(23) == 1
+assert lookup(24) is None
+assert lookup(26) == 3
+```
+
+As with `build_radix_index`, `bits` defaults to `12` and accepts non-Boolean
+integers from `0` through `12`; the directory contains at most `2**bits` buckets.
+Empty inputs, negative values, and arbitrarily large integers are supported.
+Sorted integer input and integer targets remain preconditions, and the sequence
+must remain unchanged while the callable is in use.
+
+For fixed-size integer arithmetic, preparation takes O(n + B) work and at most
+O(B + u) peak extra space for `B` buckets and `u` distinct values. Preparation
+temporarily collects the distinct values and their first indices for each
+bucket; one bucket can contain all `n` distinct values. The completed index
+discards those per-key lists for unique progressions and fallback buckets.
+Fallback buckets retain only their metadata and bounds. Certified shortcuts
+take bounded work per lookup; fallback lookup takes O(log(m + 1)) search steps
+for a bucket with `m` values. Arbitrary-size Python integer arithmetic adds a
+cost depending on operand size. Bitmap width is capped to avoid allocating a
+bit for every integer across a large gap.
+
+The full preparation scan can dominate short query batches, and additional
+dispatch or arithmetic can outweigh the comparisons saved. Compare both lookup
+and total times against `bisect`, `radix`, and the other prepared strategies.
+This combines established indexing techniques; it makes no claim of theoretical
+novelty or a universal speedup. The existing benchmark distributions use even
+keys and odd misses, so also test mixed-parity inputs and absent values that
+share the stored keys' parity before drawing broader performance conclusions.
+
+The [certified radix benchmark study](benchmarks/certified_radix/README.md)
+documents the comparison and its methodology. Reproduce it from the checkout:
+
+```console
+python -m scripts.benchmark_certified --output benchmarks/certified_radix/results.json
+```
+
+The four original prepared alternatives also expose reusable lookup APIs:
 
 ```python
 from search_algos import (
@@ -415,7 +537,7 @@ assert index.get(9) is None
   direct exact lookups. Preparation includes sampling and building the selected
   index; memory and lookup costs follow that strategy.
 
-The numeric factories require sorted integer values and integer targets. They
+These numeric factories require sorted integer values and integer targets. They
 do not scan or copy the sequence to validate these preconditions, and the
 sequence must remain unchanged during reuse. Adaptive selection can build a
 dictionary, which does traverse the input as part of construction. Sampling
@@ -638,6 +760,8 @@ The implementation is split by responsibility:
 ```text
 search_algos/
     algorithms.py   Pure search functions
+    certified.py    Certified local representations behind a radix directory
+    landmark.py     Stride, duplicate-run, and compact-directory hybrid
     prepared.py     Separate prepared search alternatives and adaptive selection
     timing.py       Optional timing and profiling helpers
     parallel.py     Partitioning and process orchestration
@@ -652,6 +776,7 @@ search_algos/
 search_algos.py     Compatibility launcher for repository checkouts
 tests/              Standard-library unittest suite
 scripts/
+    benchmark_certified.py  Reproduce the certified radix comparison study
     verify_release.py  Build and test an installed wheel outside the checkout
 ```
 
