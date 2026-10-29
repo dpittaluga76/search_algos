@@ -35,6 +35,64 @@ directory and `neighbor_prepared`, `dict_reverse`, `guarded_prepared`, and
 algorithm. The adversarial dataset and both multiprocessing modes are opt-in.
 Process startup usually costs much more than a single binary search.
 
+## How bisect works
+
+Python's `bisect` module provides binary search for already sorted sequences.
+Its search functions take O(log n) comparisons without changing the input.
+`bisect_left(values, target)` returns the position before any equal values;
+`bisect_right` (also called `bisect`) returns the position after them. A returned
+position can be `len(values)`, meaning insertion at the end. See the
+[Python bisect documentation](https://docs.python.org/3/library/bisect.html).
+
+The search starts with `lo = 0` and `hi = len(values)`. The interval `[lo, hi)`
+contains the elements still to probe: `lo` is included and `hi` is excluded.
+At each step, `mid = (lo + hi) // 2`:
+
+- If `values[mid] < target`, move `lo` to `mid + 1`.
+- Otherwise, move `hi` to `mid`. The insertion position is at or before `mid`;
+  `mid` can still be the answer even though that element leaves the probe window.
+
+When `lo == hi`, that boundary is the insertion position. This does not establish
+that the target exists. The CLI's `bisect` algorithm calls
+`binary_search_std_lib`, which checks the boundary and equality to return the
+first matching index or `None`:
+
+```python
+from bisect import bisect_left
+
+def binary_search_std_lib(input_list, lookup_value):
+    index = bisect_left(input_list, lookup_value)
+    if index < len(input_list) and input_list[index] == lookup_value:
+        return index
+    return None
+```
+
+### Interactive example
+
+[Open the bisect_left step-through example](examples/bisect_left_step_through_with_call.html).
+Open the checked-out HTML file in a browser, or download the raw file from GitHub
+and open the saved copy. The example runs in JavaScript; it illustrates the Python
+call without executing Python in the browser. Its arrow icons use a CDN stylesheet.
+
+Choose a target, then use **Next step**, **Previous step**, and **Restart** to
+follow the bounds, midpoint, insertion position, and final lookup result. The
+display uses `print(binary_search_std_lib(...))` so missing values visibly print
+`None`, just as they do in Python.
+
+The example's sorted input is:
+
+```python
+values = [2, 5, 7, 7, 7, 11, 14, 18, 21, 25, 30, 33]
+```
+
+| Target | `bisect_left(values, target)` | `binary_search_std_lib(values, target)` |
+| --- | --- | --- |
+| `7` | `2` | `2` (first duplicate) |
+| `18` | `7` | `7` |
+| `9` | `5` | `None` |
+| `40` | `12` | `None` |
+| `1` | `0` | `None` |
+
 ## Command-line options
 
 | Option | Meaning | Default |
