@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from search_algos.benchmarks import DEFAULT_DATASETS, BenchmarkConfig, run_benchmarks
 from search_algos.comparison import compare_reports, load_report, render_comparison
@@ -26,7 +27,15 @@ def report(samples=(10, 20, 30), setup=None, *, version=1, **row_changes):
         "setup_samples_ns": list(setup) if setup is not None else [0] * len(samples),
     }
     if version == 2:
-        row.update(status="complete", gc_mode="disabled")
+        row.update(
+            status="complete",
+            gc_mode="disabled",
+            repetitions=max(1, len(samples)),
+            warmups=0,
+            repetitions_completed=len(samples),
+            warmups_completed=0,
+            completed_queries=len(samples) * row["queries"],
+        )
     row.update(row_changes)
     return {
         "schema_version": version,
@@ -104,7 +113,9 @@ class ComparisonTests(unittest.TestCase):
     def test_skipped_and_incomplete_rows_are_retained_without_comparison(self):
         for status, samples in (("skipped", []), ("incomplete", [5])):
             with self.subTest(status=status):
-                candidate = report(samples, version=2, status=status, reason="budget exceeded")
+                candidate = report(
+                    samples, version=2, status=status, repetitions=3, reason="budget exceeded"
+                )
                 row = compare_reports(report(version=2), candidate)["comparisons"][0]
                 self.assertEqual(row["status"], status)
                 self.assertIn("budget exceeded", row["reason"])
@@ -226,6 +237,149 @@ class ComparisonTests(unittest.TestCase):
         for data in invalid:
             with self.subTest(data=data), self.assertRaises(ValueError):
                 compare_reports(data, report())
+
+    def test_schema_two_requires_completion_evidence(self):
+        for field in (
+            "queries",
+            "repetitions",
+            "warmups",
+            "repetitions_completed",
+            "warmups_completed",
+            "completed_queries",
+        ):
+            candidate = report(version=2)
+            del candidate["results"][0][field]
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(ValueError, rf"candidate results\[0\] {field}"),
+            ):
+                compare_reports(report(), candidate)
+
+    def test_count_fields_reject_invalid_types_and_ranges(self):
+        for field in (
+            "queries",
+            "repetitions",
+            "warmups",
+            "repetitions_completed",
+            "warmups_completed",
+            "completed_queries",
+        ):
+            invalid_values = [True, False, -1, 1.5, "1", None]
+            if field in ("queries", "repetitions"):
+                invalid_values.append(0)
+            for value in invalid_values:
+                for location in (
+                    ("row", "config")
+                    if field in ("queries", "repetitions", "warmups")
+                    else ("row",)
+                ):
+                    candidate = report(version=2)
+                    destination = (
+                        candidate["results"][0] if location == "row" else candidate["config"]
+                    )
+                    destination[field] = value
+                    with self.subTest(field=field, value=value, location=location):
+                        with self.assertRaisesRegex(ValueError, field):
+                            compare_reports(report(), candidate)
+
+    def test_progress_counts_and_status_must_match_samples(self):
+        for changes, message in (
+            ({"repetitions_completed": 2}, "repetitions_completed"),
+            ({"completed_queries": 11}, "completed_queries"),
+            ({"repetitions": 2}, "exceeds requested repetitions"),
+            ({"repetitions": 4}, "complete but timing sample count"),
+            ({"warmups": 2, "warmups_completed": 3}, "warmups_completed exceeds"),
+            ({"warmups": 2, "warmups_completed": 1}, "before all warmups"),
+            ({"status": "incomplete"}, "all requested repetitions are present"),
+        ):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, message):
+                compare_reports(report(), report(version=2, **changes))
+        with self.assertRaisesRegex(ValueError, "incomplete but has no timing samples"):
+            compare_reports(report(), report([], version=2, status="incomplete", repetitions=3))
+
+    def test_requested_counts_must_agree_with_config(self):
+        for field, value in (("queries", 5), ("repetitions", 4), ("warmups", 1)):
+            candidate = report(version=2)
+            candidate["config"][field] = value
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(
+                    ValueError, rf"candidate results\[0\] {field} conflicts with config"
+                ),
+            ):
+                compare_reports(report(), candidate)
+
+    def test_truncated_complete_report_is_rejected_on_load_and_compare(self):
+        generated = run_benchmarks(
+            BenchmarkConfig(
+                sizes=(10,),
+                datasets=("uniform",),
+                algorithms=("binary",),
+                queries=4,
+                repetitions=3,
+                warmups=1,
+                time_budget=0,
+            )
+        )
+        row = generated["results"][0]
+        row["setup_samples_ns"] = row["setup_samples_ns"][:1]
+        row["lookup_samples_ns"] = row["lookup_samples_ns"][:1]
+        row["repetitions_completed"] = 1
+        row["completed_queries"] = 4
+        with self.assertRaisesRegex(ValueError, "complete but timing sample count"):
+            compare_reports(report(), generated)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "truncated.json"
+            path.write_text(json.dumps(generated), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "complete but timing sample count"):
+                load_report(path)
+
+    def test_legacy_counts_are_optional_but_checked_when_present(self):
+        legacy = report()
+        legacy["config"].update(queries=4, repetitions=3, warmups=1)
+        self.assertEqual(compare_reports(legacy, legacy)["comparisons"][0]["speedup"], 1)
+        legacy["results"][0].update(repetitions_completed=3, completed_queries=12)
+        self.assertEqual(compare_reports(legacy, legacy)["comparisons"][0]["speedup"], 1)
+        for changes in (
+            {"repetitions_completed": 2},
+            {"completed_queries": 11},
+            {"warmups_completed": 0},
+            {"queries": 5},
+        ):
+            invalid = copy.deepcopy(legacy)
+            invalid["results"][0].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                compare_reports(legacy, invalid)
+        legacy["config"]["repetitions"] = 4
+        with self.assertRaisesRegex(ValueError, "complete but timing sample count"):
+            compare_reports(legacy, legacy)
+
+    def test_generated_complete_incomplete_and_skipped_reports_are_accepted(self):
+        options = dict(
+            sizes=(5,),
+            datasets=("uniform",),
+            algorithms=("binary",),
+            queries=2,
+            repetitions=3,
+        )
+        complete = run_benchmarks(BenchmarkConfig(**options, warmups=1, time_budget=0))
+        self.assertEqual(
+            compare_reports(complete, complete)["comparisons"][0]["status"], "compared"
+        )
+        for warmups, status in ((0, "incomplete"), (1, "skipped"), (2, "skipped")):
+            with patch("search_algos.benchmarks.perf_counter", side_effect=[0, 2]):
+                generated = run_benchmarks(
+                    BenchmarkConfig(**options, warmups=warmups, time_budget=1)
+                )
+            with self.subTest(warmups=warmups, status=status):
+                self.assertEqual(generated["results"][0]["status"], status)
+                self.assertEqual(
+                    compare_reports(generated, generated)["comparisons"][0]["status"], status
+                )
+        options["algorithms"] = ("linear",)
+        skipped = run_benchmarks(BenchmarkConfig(**options, warmups=2, max_linear_work=1))
+        self.assertEqual(skipped["results"][0]["warmups_completed"], 0)
+        self.assertEqual(compare_reports(skipped, skipped)["comparisons"][0]["status"], "skipped")
 
     def test_invalid_structure_schema_and_duplicate_identities_are_rejected(self):
         duplicate = report()

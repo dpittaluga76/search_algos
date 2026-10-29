@@ -57,6 +57,69 @@ def _samples(value: Any, label: str) -> list[float]:
     return result
 
 
+def _count(
+    data: dict[str, Any], field: str, label: str, *, minimum: int = 0, required: bool = False
+) -> int | None:
+    if field not in data and not required:
+        return None
+    value = data.get(field)
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{label} {field} must be an integer >= {minimum}")
+    return value
+
+
+def _validate_progress(
+    data: dict[str, Any],
+    config_counts: dict[str, int | None],
+    sample_count: int,
+    status: str,
+    version: int,
+    label: str,
+) -> None:
+    """Check completion evidence, allowing absent fields only in legacy rows."""
+    requested = {}
+    for field, minimum in (("queries", 1), ("repetitions", 1), ("warmups", 0)):
+        value = _count(data, field, label, minimum=minimum, required=version == 2)
+        configured = config_counts[field]
+        if value is not None and configured is not None and value != configured:
+            raise ValueError(f"{label} {field} conflicts with config: {value} versus {configured}")
+        requested[field] = value if value is not None else configured
+    completed = {
+        field: _count(data, field, label, required=version == 2)
+        for field in ("repetitions_completed", "warmups_completed", "completed_queries")
+    }
+    if completed["repetitions_completed"] not in (None, sample_count):
+        raise ValueError(
+            f"{label} repetitions_completed must equal timing sample count {sample_count}"
+        )
+    queries = requested["queries"]
+    if queries is not None and completed["completed_queries"] not in (None, sample_count * queries):
+        raise ValueError(
+            f"{label} completed_queries must equal timing sample count * queries "
+            f"({sample_count * queries})"
+        )
+    repetitions = requested["repetitions"]
+    if repetitions is not None:
+        if sample_count > repetitions:
+            raise ValueError(
+                f"{label} timing sample count exceeds requested repetitions {repetitions}"
+            )
+        if status == "complete" and sample_count != repetitions:
+            raise ValueError(
+                f"{label} is complete but timing sample count differs from repetitions"
+            )
+        if status == "incomplete" and sample_count == repetitions:
+            raise ValueError(f"{label} is incomplete but all requested repetitions are present")
+    if status == "incomplete" and sample_count == 0:
+        raise ValueError(f"{label} is incomplete but has no timing samples; use skipped")
+    warmups, warmups_completed = requested["warmups"], completed["warmups_completed"]
+    if warmups is not None and warmups_completed is not None:
+        if warmups_completed > warmups:
+            raise ValueError(f"{label} warmups_completed exceeds requested warmups {warmups}")
+        if sample_count and warmups_completed != warmups:
+            raise ValueError(f"{label} contains timing samples before all warmups were completed")
+
+
 def _validate_report(
     report: dict[str, Any], label: str
 ) -> tuple[dict[str, Any], dict[RowKey, _Row]]:
@@ -69,6 +132,10 @@ def _validate_report(
     config = report.get("config", {})
     if not isinstance(metadata, dict) or not isinstance(config, dict):
         raise ValueError(f"{label} metadata and config must be JSON objects")
+    config_counts = {
+        field: _count(config, field, f"{label} config", minimum=minimum)
+        for field, minimum in (("queries", 1), ("repetitions", 1), ("warmups", 0))
+    }
     results = report.get("results")
     if not isinstance(results, list):
         raise ValueError(f"{label} results must be a list")
@@ -84,7 +151,7 @@ def _validate_report(
         status = data.get("status", "complete" if version == 1 else None)
         if status not in ("complete", "incomplete", "skipped"):
             raise ValueError(f"{row_label} needs status complete, incomplete, or skipped")
-        for field in ("size", "queries", "effective_workers"):
+        for field in ("size", "effective_workers"):
             if field in data and (type(data[field]) is not int or data[field] < 0):
                 raise ValueError(f"{row_label} {field} must be a nonnegative integer")
         if "dataset" in data and not isinstance(data["dataset"], str):
@@ -101,6 +168,7 @@ def _validate_report(
             raise ValueError(f"{row_label} is complete but has no timing samples")
         if status == "skipped" and lookup:
             raise ValueError(f"{row_label} is skipped but contains timing samples")
+        _validate_progress(data, config_counts, len(lookup), status, version, row_label)
         gc_mode = data.get("gc_mode", config.get("gc_mode"))
         if gc_mode not in (None, "enabled", "disabled"):
             raise ValueError(f"{row_label} gc_mode must be enabled or disabled when specified")
@@ -122,7 +190,11 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def load_report(path: Path) -> dict[str, Any]:
-    """Read and validate a schema-1 or schema-2 JSON benchmark report."""
+    """Read a report, requiring consistent completion evidence for schema 2.
+
+    Legacy schema-1 progress fields remain optional, but any supplied counts
+    must agree with raw samples and requested work.
+    """
     try:
         report = json.loads(
             path.read_text(encoding="utf-8"),

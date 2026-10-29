@@ -100,6 +100,22 @@ script. It accepts benchmark report schemas 1 and 2. `--metric total` is the
 default; `lookup` excludes per-batch index construction. Output can be text,
 JSON, or CSV, with `--output` selecting a file instead of standard output.
 
+Schema 2 reports must include per-row `queries`, `repetitions`, `warmups`,
+`repetitions_completed`, `warmups_completed`, and `completed_queries` counts.
+Requested query and repetition counts must be positive integers; warmup and
+completed-work counts must be nonnegative integers. Boolean counts are rejected.
+Requested counts must agree with the report configuration when it provides them.
+The setup and lookup sample lists must have the same length, matching
+`repetitions_completed`, and `completed_queries` must equal that length times
+`queries`. Measured samples require all requested warmups to have completed.
+
+A `complete` row must contain all requested measured batches and warmups. An
+`incomplete` row must have some measured batches but fewer than requested; a
+`skipped` row has no measured samples. Completed counts cannot exceed requested
+counts. Inconsistent reports are rejected with an error identifying the affected
+row, rather than producing a speed ratio. Schema 1 reports may omit these count
+fields; any supplied counts are still checked for consistency.
+
 Rows match by workload identifier, algorithm, result kind, and timing scope.
 If identical workloads appear under multiple scenario labels, dataset and size
 disambiguate those rows without merging their samples. Conflicting known size
@@ -281,10 +297,16 @@ worker searches. `--gc enabled` measures with it enabled. The caller's prior GC
 state is restored even after an exception. Disabling cyclic GC does not remove
 reference-counting costs or other scheduling noise.
 
-Text output has one table per workload (size and dataset). Completed rows are
-ordered fastest to slowest by total median time, including per-batch setup and
-lookup costs. Its `vs fastest` column divides each total by the fastest completed
-total in the same table. Incomplete and skipped rows are shown without rankings.
+Text output separates each workload (identifier, size, and dataset) into tables
+by result kind and timing scope. Each table identifies whether the result is a first
+matching index or Boolean membership, and whether timing covers sequential
+batches, cold process pools, or reused pools. Completed rows are ordered fastest
+to slowest by total median time, including per-batch setup and lookup costs.
+Its `vs fastest` column divides each total by the fastest completed total in
+that compatible group. Membership results are not ranked against first-index
+results, and cold and reused-pool timings have separate rankings. A group with
+one completed row has no competing algorithm; its `1.00x` is only a reference
+within that group. Incomplete and skipped rows are shown without rankings.
 JSON includes configuration, runtime metadata, result summaries, and individual
 timing samples. CSV repeats metadata alongside
 each result and encodes sample lists as JSON within cells. The schema version is
@@ -338,19 +360,31 @@ python -m coverage run -m unittest discover -s tests -v
 python -m coverage combine
 python -m coverage report
 python -m coverage xml
+python scripts/verify_release.py
 ```
 
 Coverage includes CLI subprocesses and spawned workers, combines their results,
-and writes `coverage.xml`. Coverage-instrumented test timings are not performance
-measurements. The wheel ships a `py.typed` marker for downstream type checkers.
+and writes `coverage.xml`. The coverage report enforces a 95% minimum combined
+statement and branch coverage score. Coverage-instrumented test timings are not
+performance measurements. The wheel ships a `py.typed` marker for downstream
+type checkers.
+
+`python scripts/verify_release.py` builds a wheel and installs it into a fresh
+temporary virtual environment. It runs from outside the source checkout, clears
+Python import-path overrides, and verifies that imports come from the installed
+package. Checks cover the public API, installed `py.typed` marker, console and
+module commands, JSON and CSV exports, saved-report comparison, and spawned
+workers. Temporary build and test files are cleaned up when the check finishes.
+Building requires access to the build dependencies declared in `pyproject.toml`,
+either from the package index or a configured local cache.
 
 The suite includes doctests, small-input correctness checks, boundary and
 duplicate cases, seeded larger-input checks against `bisect`, multiprocessing
 failures, benchmark validation, and CLI/export/compare coverage. CI is configured
-to run tests on Windows and Linux across Python 3.10 through 3.14, publish each
-coverage report as an artifact, and check lint, formatting, and strict types in
-a separate job. Dependabot checks GitHub Actions and Python development
-dependencies weekly.
+to run tests and installed-wheel verification on Windows and Linux across Python
+3.10 through 3.14, enforce the coverage floor, publish each coverage report as an
+artifact, and check lint, formatting, and strict types in a separate job.
+Dependabot checks GitHub Actions and Python development dependencies weekly.
 
 The implementation is split by responsibility:
 
@@ -369,6 +403,8 @@ search_algos/
     __main__.py     python -m search_algos entry point
 search_algos.py     Compatibility launcher for repository checkouts
 tests/              Standard-library unittest suite
+scripts/
+    verify_release.py  Build and test an installed wheel outside the checkout
 ```
 
 This project is distributed under GPL-3.0-only. See [LICENSE](LICENSE).
