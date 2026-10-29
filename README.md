@@ -35,7 +35,7 @@ directory and `neighbor_prepared`, `dict_reverse`, `guarded_prepared`, and
 algorithm. The adversarial dataset and both multiprocessing modes are opt-in.
 Process startup usually costs much more than a single binary search.
 
-## How bisect works
+## BISECT
 
 Python's `bisect` module provides binary search for already sorted sequences.
 Its search functions take O(log n) comparisons without changing the input.
