@@ -93,7 +93,7 @@ values = [2, 5, 7, 7, 7, 11, 14, 18, 21, 25, 30, 33]
 
 The CLI's `radix` strategy uses `build_radix_index` to prepare a directory of
 value ranges for repeated searches on an already sorted integer sequence.
-It leaves the input in place; this is a search index, not radix sort.
+It leaves the input in place.
 
 1. **Prepare the directory.** Divide the value range into buckets whose width
    is a power of two. Use `bisect_left` to record each bucket's start and end
