@@ -1,4 +1,4 @@
-# Search algorithms benchmark
+# Search algorithms benchmark with Python
 
 Compare Python search algorithms on reproducible workloads, with correctness
 checks and separate measurements for lookup and preparation costs. The runtime
