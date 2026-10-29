@@ -70,7 +70,13 @@ def binary_search_std_lib(input_list, lookup_value):
 
 ### Interactive example
 
-[Open the bisect_left step-through example](examples/bisect_left_step_through_with_call.html).
+[Open Search Lab](https://search-lab-bisect.dpittaluga.chatgpt.site) for the public
+bisect walkthrough, with step controls, playback, custom targets, synchronized
+Python code highlighting, and a copyable Python example. Its example library
+starts with bisect and is designed to accommodate more walkthroughs.
+
+The [standalone HTML walkthrough](examples/bisect_left_step_through_with_call.html)
+is also available.
 Open the checked-out HTML file in a browser, or download the raw file from GitHub
 and open the saved copy. The example runs in JavaScript; it illustrates the Python
 call without executing Python in the browser. Its arrow icons use a CDN stylesheet.
