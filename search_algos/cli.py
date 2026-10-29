@@ -61,18 +61,30 @@ def render_report(report: dict, output_format: str) -> str:
         f"Seed {config['seed']} | {config['repetitions']} measured batches | {config['queries']} queries/batch | {config['warmups']} warmups",
         "Batch times are milliseconds; IQR is the interquartile range of lookup times.",
         "Set construction appears under setup; parallel lookup includes process startup and shutdown.",
-        "Rows are ordered fastest to slowest by total median time (setup + lookup).",
-        "",
-        f"{'algorithm':<14} {'dataset':<11} {'size':>8} {'hits':>6} {'setup med':>12} {'lookup med':>12} {'lookup IQR':>12} {'total med':>12} {'ns/query':>12}",
+        "Each workload is listed separately, fastest to slowest by total median time (setup + lookup).",
     ]
-    for row in sorted(report["results"], key=lambda row: row["total_median_ns"]):
-        lines.append(
-            f"{row['algorithm']:<14} {row['dataset']:<11} {row['size']:>8} {row['hits']:>6} "
-            f"{row['setup_median_ns'] / 1e6:>12.6f} {row['lookup_median_ns'] / 1e6:>12.6f} "
-            f"{row['lookup_iqr_ns'] / 1e6:>12.6f} {row['total_median_ns'] / 1e6:>12.6f} "
-            f"{row['per_query_median_ns']:>12.1f}"
-        )
-    lines.extend(["", "ns/query is the amortized lookup batch time; total includes setup. JSON/CSV include raw samples and workload IDs."])
+    # Rows from different workloads are not comparable, so rank only within one.
+    groups: dict[tuple[int, str], list[dict]] = {}
+    for row in report["results"]:
+        groups.setdefault((row["size"], row["dataset"]), []).append(row)
+    for (size, dataset), rows in groups.items():
+        rows = sorted(rows, key=lambda row: row["total_median_ns"])
+        fastest = rows[0]["total_median_ns"]
+        lines.extend([
+            "",
+            f"{dataset}, size {size}: {rows[0]['hits']} hits / {rows[0]['queries']} queries",
+            f"{'algorithm':<14} {'setup med':>12} {'lookup med':>12} {'lookup IQR':>12} {'total med':>12} {'ns/query':>12} {'vs fastest':>11}",
+        ])
+        for row in rows:
+            total = row["total_median_ns"]
+            relative = f"{total / fastest:.2f}x" if fastest else ("1.00x" if not total else "n/a")
+            lines.append(
+                f"{row['algorithm']:<14} "
+                f"{row['setup_median_ns'] / 1e6:>12.6f} {row['lookup_median_ns'] / 1e6:>12.6f} "
+                f"{row['lookup_iqr_ns'] / 1e6:>12.6f} {total / 1e6:>12.6f} "
+                f"{row['per_query_median_ns']:>12.1f} {relative:>11}"
+            )
+    lines.extend(["", "ns/query is the amortized lookup batch time; total includes setup. vs fastest compares totals within a workload. JSON/CSV include raw samples and workload IDs."])
     return "\n".join(lines) + "\n"
 
 

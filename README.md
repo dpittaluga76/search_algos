@@ -10,8 +10,14 @@ uses only the Python standard library. The project targets Python 3.10 through
 Run from the repository without installing anything:
 
 ```console
-python search_algos.py
-python -m lib --size 100 1000 --datasets uniform gapped --seed 42
+python -m search_algos
+python -m search_algos --size 100 1000 --datasets uniform gapped --seed 42
+```
+
+The existing script command remains supported through a compatibility launcher:
+
+```console
+python search_algos.py --size 1000 --seed 42
 ```
 
 Or install the package and use its command:
@@ -50,14 +56,14 @@ the number of elements, and by 61 on Windows.
 Export a reproducible comparison:
 
 ```console
-python search_algos.py --size 1000 10000 --datasets uniform duplicates skewed --seed 42 --format json --output results.json
-python search_algos.py --size 1000 --datasets gapped --algorithms binary set --format csv --output results.csv
+python -m search_algos --size 1000 10000 --datasets uniform duplicates skewed --seed 42 --format json --output results.json
+python -m search_algos --size 1000 --datasets gapped --algorithms binary set --format csv --output results.csv
 ```
 
 Include the full cost of multiprocessing:
 
 ```console
-python search_algos.py --size 10000 --datasets gapped --algorithms binary parallel --workers 2 --queries 100 --repetitions 5
+python -m search_algos --size 10000 --datasets gapped --algorithms binary parallel --workers 2 --queries 100 --repetitions 5
 ```
 
 ## Search API
@@ -65,7 +71,7 @@ python search_algos.py --size 10000 --datasets gapped --algorithms binary parall
 Search functions are quiet and return their results directly:
 
 ```python
-from lib import binary_search, binary_search_by_recursion, find_by_sets
+from search_algos import binary_search, binary_search_by_recursion, find_by_sets
 
 values = [1, 3, 3, 8]
 assert binary_search(values, 3) == 1
@@ -95,7 +101,7 @@ construct the set once and use `target in prepared_set`. The benchmark measures
 this preparation and the subsequent batch of membership queries separately.
 
 The optional `show_runtime_and_result` and `profile_this` decorators remain
-available from `lib`. They return the wrapped function's result; search functions
+available from `search_algos`. They return the wrapped function's result; search functions
 are not decorated automatically. Timing a recursive search therefore surrounds
 the complete call once. Result formatting distinguishes indices, missing values,
 and Boolean membership results.
@@ -111,7 +117,7 @@ Use the main guard when starting processes, including on Unix: the implementatio
 uses the `spawn` start method on every platform.
 
 ```python
-from lib import parallel_search, parallel_search_many
+from search_algos import parallel_search, parallel_search_many
 
 if __name__ == "__main__":
     values = [1, 2, 3, 4, 5]
@@ -168,8 +174,9 @@ startup, serialization, result aggregation, and pool shutdown for each batch.
 Pools are not retained between samples. Sequential lookups include the Python
 loop that executes the queries.
 
-Text output is ordered fastest to slowest by total median time, including setup
-and lookup costs. JSON includes configuration, runtime metadata,
+Text output has one table per workload (size and dataset), ordered fastest to
+slowest by total median time, including setup and lookup costs. Its `vs fastest`
+column divides each total by the fastest total in the same table. JSON includes configuration, runtime metadata,
 result summaries, and individual timing samples. CSV repeats metadata alongside
 each result and encodes sample lists as JSON within cells. The schema version is
 `1`; result records include:
@@ -206,16 +213,16 @@ and Linux across Python 3.10 through 3.14, followed by command-line smoke tests.
 The implementation is split by responsibility:
 
 ```text
-lib/
+search_algos/
     algorithms.py   Pure search functions
     timing.py       Optional timing and profiling helpers
     parallel.py     Partitioning and process orchestration
     benchmarks.py   Workload generation, measurement, and validation
     cli.py          Argument parsing and report output
     __init__.py     Public API exports
-    __main__.py     python -m lib entry point
-search_algos.py     Repository command entry point
-tests/             Standard-library unittest suite
+    __main__.py     python -m search_algos entry point
+search_algos.py     Compatibility launcher for repository checkouts
+tests/              Standard-library unittest suite
 ```
 
 This project is distributed under GPL-3.0-only. See [LICENSE](LICENSE).

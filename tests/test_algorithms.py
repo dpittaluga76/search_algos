@@ -4,7 +4,7 @@ import io
 import itertools
 import unittest
 
-from lib import algorithms
+from search_algos import algorithms
 
 
 INDEX_SEARCHES = (

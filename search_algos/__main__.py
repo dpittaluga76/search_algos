@@ -1,4 +1,4 @@
-"""Support ``python -m lib``."""
+"""Support ``python -m search_algos``."""
 
 from .cli import main
 

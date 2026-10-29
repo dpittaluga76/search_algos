@@ -5,7 +5,7 @@ import statistics
 import unittest
 from unittest.mock import patch
 
-from lib.benchmarks import (
+from search_algos.benchmarks import (
     DATASET_NAMES,
     DEFAULT_ALGORITHMS,
     INDEX_ALGORITHMS,
@@ -128,8 +128,8 @@ class BenchmarkTests(unittest.TestCase):
         def verify_after_timing(algorithm, results, workload):
             self.assertEqual(len(timer_calls), 2)
             verify_results(algorithm, results, workload)
-        with patch("lib.benchmarks.perf_counter_ns", side_effect=timer):
-            with patch("lib.benchmarks.verify_results", side_effect=verify_after_timing):
+        with patch("search_algos.benchmarks.perf_counter_ns", side_effect=timer):
+            with patch("search_algos.benchmarks.verify_results", side_effect=verify_after_timing):
                 report = run_benchmarks(BenchmarkConfig(
                     sizes=(10,), datasets=("uniform",), algorithms=("binary",),
                     queries=4, repetitions=1, warmups=0,

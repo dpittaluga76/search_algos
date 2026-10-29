@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 
+from search_algos.cli import render_report
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SMALL_RUN = [
@@ -19,9 +21,9 @@ SMALL_RUN = [
 
 
 class CliTests(unittest.TestCase):
-    def run_cli(self, *args, module=False):
+    def run_cli(self, *args, script=False):
         command = [sys.executable, "-B"]
-        command += ["-m", "lib"] if module else ["search_algos.py"]
+        command += ["search_algos.py"] if script else ["-m", "search_algos"]
         return subprocess.run(command + list(args), cwd=ROOT, capture_output=True, text=True, timeout=30)
 
     def test_json_stdout_is_a_clean_report(self):
@@ -33,8 +35,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(report["config"]["sizes"], [0, 1, 10])
         self.assertEqual(report["results"][0]["hits"], 0)
 
-    def test_module_entry_point_csv_includes_metadata_and_samples(self):
-        completed = self.run_cli(*SMALL_RUN, "--format", "csv", module=True)
+    def test_csv_includes_metadata_and_samples(self):
+        completed = self.run_cli(*SMALL_RUN, "--format", "csv")
         self.assertEqual(completed.returncode, 0, completed.stderr)
         rows = list(csv.DictReader(io.StringIO(completed.stdout)))
         self.assertEqual(len(rows), 6)
@@ -80,18 +82,20 @@ class CliTests(unittest.TestCase):
             self.assertNotIn("Traceback", completed.stderr)
 
     def test_all_algorithms_include_parallel_in_a_real_cli_run(self):
-        completed = self.run_cli(
-            "--size", "10", "--datasets", "gapped", "--algorithms", "all",
-            "--workers", "2", "--queries", "4", "--repetitions", "1",
-            "--warmups", "0", "--format", "json",
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        rows = json.loads(completed.stdout)["results"]
-        self.assertEqual(len(rows), 7)
-        parallel = next(row for row in rows if row["algorithm"] == "parallel")
-        self.assertEqual(parallel["effective_workers"], 2)
-        self.assertEqual(parallel["timing_scope"], "batch_with_process_startup")
-        self.assertEqual(parallel["hits"], 2)
+        for script in (False, True):
+            with self.subTest(script=script):
+                completed = self.run_cli(
+                    "--size", "10", "--datasets", "gapped", "--algorithms", "all",
+                    "--workers", "2", "--queries", "4", "--repetitions", "1",
+                    "--warmups", "0", "--format", "json", script=script,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                rows = json.loads(completed.stdout)["results"]
+                self.assertEqual(len(rows), 7)
+                parallel = next(row for row in rows if row["algorithm"] == "parallel")
+                self.assertEqual(parallel["effective_workers"], 2)
+                self.assertEqual(parallel["timing_scope"], "batch_with_process_startup")
+                self.assertEqual(parallel["hits"], 2)
 
     def test_help_and_text_report(self):
         help_result = self.run_cli("--help")
@@ -102,6 +106,39 @@ class CliTests(unittest.TestCase):
         self.assertIn("lookup IQR", completed.stdout)
         self.assertIn("set", completed.stdout)
         self.assertNotIn("found at positions", completed.stdout)
+
+    def test_text_report_ranks_within_each_workload(self):
+        def row(algorithm, size, dataset, total):
+            return {
+                "algorithm": algorithm, "size": size, "dataset": dataset,
+                "hits": 2, "queries": 4, "setup_median_ns": 0,
+                "lookup_median_ns": total, "lookup_iqr_ns": 0,
+                "total_median_ns": total, "per_query_median_ns": total / 4,
+            }
+        report = {
+            "metadata": {"python_version": "3", "python_implementation": "CPython", "platform": "test"},
+            "config": {"seed": 0, "repetitions": 1, "queries": 4, "warmups": 0},
+            "results": [
+                row("binary", 10, "uniform", 400), row("set", 10, "uniform", 100),
+                row("binary", 10, "skewed", 50), row("set", 10, "skewed", 0),
+                row("binary", 0, "uniform", 0), row("set", 0, "uniform", 0),
+            ],
+        }
+        lines = render_report(report, "text").splitlines()
+        headers = [line for line in lines if " size " in line and "queries" in line]
+        self.assertEqual(headers, [
+            "uniform, size 10: 2 hits / 4 queries",
+            "skewed, size 10: 2 hits / 4 queries",
+            "uniform, size 0: 2 hits / 4 queries",
+        ])
+        first = lines.index(headers[0])
+        self.assertTrue(lines[first + 2].startswith("set "))
+        self.assertTrue(lines[first + 2].endswith("1.00x"))
+        self.assertTrue(lines[first + 3].endswith("4.00x"))
+        second = lines.index(headers[1])
+        self.assertTrue(lines[second + 3].endswith("n/a"))
+        third = lines.index(headers[2])
+        self.assertTrue(lines[third + 3].endswith("1.00x"))
 
 
 if __name__ == "__main__":

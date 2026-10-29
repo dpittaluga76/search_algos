@@ -3,8 +3,8 @@ import io
 import unittest
 from unittest.mock import Mock, patch
 
-from lib.algorithms import binary_search_by_recursion, find_by_sets, linear_search
-from lib.timing import format_result, profile_this, show_runtime_and_result
+from search_algos.algorithms import binary_search_by_recursion, find_by_sets, linear_search
+from search_algos.timing import format_result, profile_this, show_runtime_and_result
 
 
 class TimingTests(unittest.TestCase):
@@ -42,7 +42,7 @@ class TimingTests(unittest.TestCase):
 
     def test_profiler_returns_result(self):
         profiler = Mock()
-        with patch("lib.timing.cProfile.Profile", return_value=profiler):
+        with patch("search_algos.timing.cProfile.Profile", return_value=profiler):
             self.assertEqual(profile_this(linear_search)([7], 7), 0)
         profiler.enable.assert_called_once_with()
         profiler.disable.assert_called_once_with()
@@ -53,7 +53,7 @@ class TimingTests(unittest.TestCase):
             raise RuntimeError("expected failure")
 
         profiler = Mock()
-        with patch("lib.timing.cProfile.Profile", return_value=profiler):
+        with patch("search_algos.timing.cProfile.Profile", return_value=profiler):
             with self.assertRaisesRegex(RuntimeError, "expected failure"):
                 profile_this(fail)()
         profiler.disable.assert_called_once_with()

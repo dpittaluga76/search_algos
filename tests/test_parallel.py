@@ -11,8 +11,8 @@ import sys
 import unittest
 from unittest.mock import patch
 
-from lib.algorithms import binary_search
-from lib.parallel import (
+from search_algos.algorithms import binary_search
+from search_algos.parallel import (
     chunk_ranges,
     effective_worker_count,
     multiproc_test,
@@ -81,16 +81,16 @@ class PartitionTests(unittest.TestCase):
                 effective_worker_count(size, 2)
 
     def test_default_workers_and_windows_limit(self):
-        with patch("lib.parallel.os.cpu_count", return_value=4):
+        with patch("search_algos.parallel.os.cpu_count", return_value=4):
             self.assertEqual(effective_worker_count(10), 4)
             self.assertEqual(effective_worker_count(2), 2)
-        with patch("lib.parallel.os.cpu_count", return_value=None):
+        with patch("search_algos.parallel.os.cpu_count", return_value=None):
             self.assertEqual(effective_worker_count(10), 1)
-        with patch("lib.parallel.sys.platform", "win32"):
+        with patch("search_algos.parallel.sys.platform", "win32"):
             self.assertEqual(effective_worker_count(1000, 1000), 61)
 
     def test_empty_work_avoids_starting_a_pool(self):
-        with patch("lib.parallel.ProcessPoolExecutor", side_effect=AssertionError):
+        with patch("search_algos.parallel.ProcessPoolExecutor", side_effect=AssertionError):
             self.assertEqual(parallel_search_many([], [1, 2], 2), [None, None])
             self.assertEqual(parallel_search_many([1, 2], [], 2), [])
             self.assertIsNone(parallel_search([], 1, 2))

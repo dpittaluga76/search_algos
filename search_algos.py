@@ -1,6 +1,6 @@
-"""Run the search benchmark from a repository checkout."""
+"""Compatibility launcher for running the benchmark from a checkout."""
 
-from lib.cli import main
+from search_algos.cli import main
 
 
 if __name__ == "__main__":
