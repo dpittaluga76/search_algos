@@ -1,17 +1,27 @@
 """Quiet search functions with explicit, consistent result contracts.
 
-Index searches return the first matching index, or ``None``. Except for
-``linear_search``, they require an ascending sorted sequence. Set lookup returns
-a Boolean and also accepts unsorted input. Sorting and input validation are left
-to callers so they do not become part of the measured lookup cost.
+Index searches return the first matching index, or ``None``. Binary,
+interpolation, exponential, and jump searches require ascending sorted input.
+Linear search and the hash-based helpers also accept unsorted input. Sorting and
+input validation are left to callers so they do not become part of lookup cost.
 """
 
 from bisect import bisect_left
-from collections.abc import Iterable, Sequence
-from typing import TypeVar
-
+from collections.abc import Hashable, Iterable, Sequence
+from math import isqrt
+from typing import Any, Protocol, TypeVar
 
 T = TypeVar("T")
+H = TypeVar("H", bound=Hashable)
+
+
+class Comparable(Protocol):
+    """Values supporting the ordering operation used by sorted searches."""
+
+    def __lt__(self, other: Any, /) -> bool: ...
+
+
+C = TypeVar("C", bound=Comparable)
 
 
 def linear_search(input_list: Iterable[T], lookup_value: T) -> int | None:
@@ -29,7 +39,7 @@ def linear_search(input_list: Iterable[T], lookup_value: T) -> int | None:
     return None
 
 
-def binary_search(input_list: Sequence[T], lookup_value: T) -> int | None:
+def binary_search(input_list: Sequence[C], lookup_value: C) -> int | None:
     """Return the first matching index in an ascending sorted sequence.
 
     >>> binary_search([0, 3, 5, 33, 44], 0)
@@ -50,7 +60,7 @@ def binary_search(input_list: Sequence[T], lookup_value: T) -> int | None:
     return None
 
 
-def binary_search_std_lib(input_list: Sequence[T], lookup_value: T) -> int | None:
+def binary_search_std_lib(input_list: Sequence[C], lookup_value: C) -> int | None:
     """Find the first match in an ascending sorted sequence using ``bisect``.
 
     >>> binary_search_std_lib([0, 5, 7, 10, 15], 0)
@@ -68,7 +78,7 @@ def binary_search_std_lib(input_list: Sequence[T], lookup_value: T) -> int | Non
 
 
 def _binary_search_recursive(
-    input_list: Sequence[T], lookup_value: T, left: int, right: int
+    input_list: Sequence[C], lookup_value: C, left: int, right: int
 ) -> int | None:
     if left > right:
         return None
@@ -82,8 +92,8 @@ def _binary_search_recursive(
 
 
 def binary_search_by_recursion(
-    input_list: Sequence[T],
-    lookup_value: T,
+    input_list: Sequence[C],
+    lookup_value: C,
     left: int = 0,
     right: int | None = None,
 ) -> int | None:
@@ -103,16 +113,19 @@ def binary_search_by_recursion(
     """
     if right is None:
         right = len(input_list) - 1
-    if not isinstance(left, int) or not isinstance(right, int):
+    if (
+        isinstance(left, bool)
+        or isinstance(right, bool)
+        or not isinstance(left, int)
+        or not isinstance(right, int)
+    ):
         raise TypeError("search bounds must be integers")
     if not 0 <= left <= len(input_list) or not -1 <= right < len(input_list):
         raise ValueError("search bounds must lie within the sequence")
     return _binary_search_recursive(input_list, lookup_value, left, right)
 
 
-def interpolation_search(
-    input_list: Sequence[int | float], lookup_value: int | float
-) -> int | None:
+def interpolation_search(input_list: Sequence[int | float], lookup_value: float) -> int | None:
     """Return the first match in ascending sorted, finite numeric input.
 
     Integers use exact arithmetic, including integers larger than a float can
@@ -151,7 +164,134 @@ def interpolation_search(
     return result
 
 
-def find_by_sets(input_list: Iterable[T], lookup_value: T) -> bool:
+def interpolation_search_hybrid(
+    input_list: Sequence[int | float], lookup_value: float
+) -> int | None:
+    """Interpolate briefly, then use binary search if progress is too slow.
+
+    At most ``len(input_list).bit_length()`` interpolation probes are made.
+    The binary fallback searches the remaining interval, preserving the first
+    match even when duplicate values precede an already-discovered match.
+    Input must be ascending and contain finite numeric values.
+
+    >>> interpolation_search_hybrid([1, 2, 3, 4, 10**12], 4)
+    3
+    >>> interpolation_search_hybrid([1, 2, 2, 2, 10**12], 2)
+    1
+    >>> interpolation_search_hybrid([], 4)
+    """
+    low, high = 0, len(input_list) - 1
+    remaining_probes = len(input_list).bit_length()
+    result = None
+    while low <= high and input_list[low] <= lookup_value <= input_list[high]:
+        lower, upper = input_list[low], input_list[high]
+        if lower == lookup_value:
+            return low
+        if lower == upper:
+            break
+        if remaining_probes == 0:
+            break
+        remaining_probes -= 1
+        try:
+            offset = int((lookup_value - lower) * (high - low) // (upper - lower))
+        except (OverflowError, ValueError):
+            break
+        index = min(high, max(low, low + offset))
+        if input_list[index] < lookup_value:
+            low = index + 1
+        else:
+            if input_list[index] == lookup_value:
+                result = index
+            high = index - 1
+    if low <= high:
+        index = bisect_left(input_list, lookup_value, low, high + 1)
+        if index <= high and input_list[index] == lookup_value:
+            return index
+    return result
+
+
+def exponential_search(input_list: Sequence[C], lookup_value: C) -> int | None:
+    """Find the first match by galloping to a bound, then binary searching.
+
+    Input must be sorted ascending. The galloping phase doubles its bound until
+    it reaches or passes the target; no sequence slices are created.
+
+    >>> exponential_search([1, 3, 3, 8, 20], 3)
+    1
+    >>> exponential_search([1, 3, 8], 9)
+    >>> exponential_search([], 1)
+    """
+    size = len(input_list)
+    if size == 0:
+        return None
+    if input_list[0] == lookup_value:
+        return 0
+    bound = 1
+    while bound < size and input_list[bound] < lookup_value:
+        bound *= 2
+    index = bisect_left(input_list, lookup_value, bound // 2, min(bound + 1, size))
+    if index < size and input_list[index] == lookup_value:
+        return index
+    return None
+
+
+def jump_search(input_list: Sequence[C], lookup_value: C) -> int | None:
+    """Find the first match using square-root blocks and a linear block scan.
+
+    Input must be sorted ascending.
+
+    >>> jump_search([1, 2, 2, 2, 3, 4], 2)
+    1
+    >>> jump_search([1, 2, 3], 4)
+    >>> jump_search([], 4)
+    """
+    size = len(input_list)
+    if size == 0:
+        return None
+    step = max(1, isqrt(size))
+    start, stop = 0, min(step, size)
+    while input_list[stop - 1] < lookup_value:
+        start = stop
+        if start >= size:
+            return None
+        stop = min(stop + step, size)
+    for index in range(start, stop):
+        current = input_list[index]
+        if current == lookup_value:
+            return index
+        if lookup_value < current:
+            break
+    return None
+
+
+def build_first_index(input_list: Iterable[H]) -> dict[H, int]:
+    """Build a hash index mapping each value to its first input position.
+
+    Input need not be sorted, but values must be hashable. Construct this once
+    and call ``index.get(target)`` for repeated first-index lookups.
+
+    >>> build_first_index([3, 1, 3, 2, 1])
+    {3: 0, 1: 1, 2: 3}
+    >>> build_first_index([])
+    {}
+    """
+    result: dict[H, int] = {}
+    for index, value in enumerate(input_list):
+        result.setdefault(value, index)
+    return result
+
+
+def find_by_dict(input_list: Iterable[H], lookup_value: H) -> int | None:
+    """Return the first match, building a hash index for this call.
+
+    >>> find_by_dict([3, 1, 3, 2, 1], 1)
+    1
+    >>> find_by_dict([3, 1], 9)
+    """
+    return build_first_index(input_list).get(lookup_value)
+
+
+def find_by_sets(input_list: Iterable[H], lookup_value: H) -> bool:
     """Return membership as a Boolean, building a set for this call.
 
     Items must be hashable. For repeated lookups, construct a set once and use

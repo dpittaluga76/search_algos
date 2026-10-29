@@ -8,6 +8,25 @@ permissions:
   contents: read
 
 jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install development tools
+        run: python -m pip install ".[dev]"
+      - name: Lint
+        run: python -m ruff check .
+      - name: Check formatting
+        run: python -m ruff format --check .
+      - name: Type check the package
+        run: python -m mypy --package search_algos
+      - name: Verify installed typing marker
+        run: python -c "from importlib.metadata import distribution; files = distribution('search-algos').files; assert files and any(str(path) == 'search_algos/py.typed' for path in files)"
+
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -21,10 +40,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install package
-        run: python -m pip install .
+      - name: Install package and development tools
+        run: python -m pip install ".[dev]"
       - name: Run regression tests and doctests
-        run: python -m unittest discover -s tests -v
+        run: python -m coverage run -m unittest discover -s tests -v
+      - name: Combine parent and worker coverage
+        if: always()
+        run: python -m coverage combine
+      - name: Report branch coverage
+        if: always()
+        run: python -m coverage report
+      - name: Export coverage report
+        if: always()
+        run: python -m coverage xml
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-${{ matrix.os }}-python-${{ matrix.python }}
+          path: coverage.xml
+          if-no-files-found: warn
       - name: Smoke test installed command and JSON export
         run: search-algos --size 0 10 --datasets duplicates --algorithms binary set --queries 10 --repetitions 2 --warmups 0 --format json --output benchmark-smoke.json
       - name: Smoke test module command and CSV export

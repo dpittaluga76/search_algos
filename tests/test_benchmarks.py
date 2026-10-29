@@ -1,5 +1,6 @@
 """Workload, correctness-gating, and measurement regression tests."""
 
+import gc
 import random
 import statistics
 import unittest
@@ -8,6 +9,7 @@ from unittest.mock import patch
 from search_algos.benchmarks import (
     DATASET_NAMES,
     DEFAULT_ALGORITHMS,
+    DEFAULT_DATASETS,
     INDEX_ALGORITHMS,
     BenchmarkConfig,
     make_workload,
@@ -38,7 +40,10 @@ class WorkloadTests(unittest.TestCase):
                             for target in workload.targets
                         )
                         self.assertEqual(workload.expected_indices, expected)
-                        self.assertEqual(sum(index is not None for index in expected), round(20 * hit_rate) if size else 0)
+                        self.assertEqual(
+                            sum(index is not None for index in expected),
+                            round(20 * hit_rate) if size else 0,
+                        )
 
     def test_misses_include_inside_and_outside_the_data_range(self):
         workload = make_workload(100, "gapped", queries=20, hit_rate=0)
@@ -58,13 +63,26 @@ class WorkloadTests(unittest.TestCase):
 class BenchmarkTests(unittest.TestCase):
     def test_invalid_configuration_is_rejected(self):
         invalid = [
-            {"sizes": ()}, {"sizes": (-1,)}, {"sizes": (True,)},
-            {"sizes": (1, 1)}, {"datasets": ()}, {"datasets": ("unknown",)},
-            {"algorithms": ()}, {"algorithms": ("binary", "binary")},
-            {"algorithms": ("unknown",)}, {"queries": 0}, {"queries": 1.5},
-            {"repetitions": 0}, {"warmups": -1}, {"workers": 0},
-            {"workers": True}, {"seed": 1.5}, {"hit_rate": -0.1},
-            {"hit_rate": 1.1}, {"hit_rate": float("nan")}, {"hit_rate": float("inf")},
+            {"sizes": ()},
+            {"sizes": (-1,)},
+            {"sizes": (True,)},
+            {"sizes": (1, 1)},
+            {"datasets": ()},
+            {"datasets": ("unknown",)},
+            {"algorithms": ()},
+            {"algorithms": ("binary", "binary")},
+            {"algorithms": ("unknown",)},
+            {"queries": 0},
+            {"queries": 1.5},
+            {"repetitions": 0},
+            {"warmups": -1},
+            {"workers": 0},
+            {"workers": True},
+            {"seed": 1.5},
+            {"hit_rate": -0.1},
+            {"hit_rate": 1.1},
+            {"hit_rate": float("nan")},
+            {"hit_rate": float("inf")},
         ]
         for arguments in invalid:
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
@@ -73,7 +91,9 @@ class BenchmarkTests(unittest.TestCase):
     def test_all_sequential_algorithms_validate_on_all_distributions(self):
         config = BenchmarkConfig(sizes=(0, 1, 40), queries=8, repetitions=2, warmups=1)
         report = run_benchmarks(config)
-        self.assertEqual(len(report["results"]), 3 * 4 * len(DEFAULT_ALGORITHMS))
+        self.assertEqual(
+            len(report["results"]), 3 * len(DEFAULT_DATASETS) * len(DEFAULT_ALGORITHMS)
+        )
         ids = {}
         for row in report["results"]:
             key = (row["size"], row["dataset"])
@@ -87,7 +107,7 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(row["total_median_ns"], statistics.median(total))
             self.assertGreaterEqual(row["lookup_iqr_ns"], 0)
             self.assertEqual(row["per_query_median_ns"], row["lookup_median_ns"] / 8)
-            if row["algorithm"] != "set":
+            if row["algorithm"] not in ("set", "dict"):
                 self.assertEqual(row["setup_samples_ns"], [0, 0])
             if row["size"] == 0:
                 self.assertEqual(row["actual_hit_rate"], 0)
@@ -97,24 +117,40 @@ class BenchmarkTests(unittest.TestCase):
     def test_wrong_results_abort_the_run(self):
         with patch.dict(INDEX_ALGORITHMS, {"binary": lambda values, target: None}):
             with self.assertRaisesRegex(RuntimeError, "binary returned"):
-                run_benchmarks(BenchmarkConfig(
-                    sizes=(10,), datasets=("uniform",), algorithms=("binary",),
-                    queries=4, hit_rate=1, repetitions=1, warmups=0,
-                ))
+                run_benchmarks(
+                    BenchmarkConfig(
+                        sizes=(10,),
+                        datasets=("uniform",),
+                        algorithms=("binary",),
+                        queries=4,
+                        hit_rate=1,
+                        repetitions=1,
+                        warmups=0,
+                    )
+                )
 
     def test_result_validation_distinguishes_boolean_from_index_zero(self):
         workload = make_workload(1, "uniform", queries=1, hit_rate=1)
         verify_results("binary", [0], workload)
         verify_results("set", [True], workload)
         for algorithm, results in (("binary", [False]), ("set", [0]), ("binary", [])):
-            with self.subTest(algorithm=algorithm, results=results), self.assertRaises(RuntimeError):
+            with (
+                self.subTest(algorithm=algorithm, results=results),
+                self.assertRaises(RuntimeError),
+            ):
                 verify_results(algorithm, results, workload)
 
     def test_single_repetition_has_zero_iqr(self):
-        report = run_benchmarks(BenchmarkConfig(
-            sizes=(10,), datasets=("uniform",), algorithms=("set",),
-            queries=4, repetitions=1, warmups=0,
-        ))
+        report = run_benchmarks(
+            BenchmarkConfig(
+                sizes=(10,),
+                datasets=("uniform",),
+                algorithms=("set",),
+                queries=4,
+                repetitions=1,
+                warmups=0,
+            )
+        )
         row = report["results"][0]
         self.assertEqual(row["lookup_iqr_ns"], 0)
         self.assertEqual(row["setup_iqr_ns"], 0)
@@ -122,19 +158,158 @@ class BenchmarkTests(unittest.TestCase):
     def test_verification_runs_after_lookup_timer_stops(self):
         # Slow correctness checks must not contaminate the advertised timings.
         timer_calls = []
+
         def timer():
             timer_calls.append(None)
             return len(timer_calls) * 100
+
         def verify_after_timing(algorithm, results, workload):
             self.assertEqual(len(timer_calls), 2)
             verify_results(algorithm, results, workload)
+
         with patch("search_algos.benchmarks.perf_counter_ns", side_effect=timer):
             with patch("search_algos.benchmarks.verify_results", side_effect=verify_after_timing):
-                report = run_benchmarks(BenchmarkConfig(
-                    sizes=(10,), datasets=("uniform",), algorithms=("binary",),
-                    queries=4, repetitions=1, warmups=0,
-                ))
+                report = run_benchmarks(
+                    BenchmarkConfig(
+                        sizes=(10,),
+                        datasets=("uniform",),
+                        algorithms=("binary",),
+                        queries=4,
+                        repetitions=1,
+                        warmups=0,
+                    )
+                )
         self.assertEqual(report["results"][0]["lookup_samples_ns"], [100])
+
+    def test_gc_policy_is_applied_and_previous_state_restored(self):
+        original = gc.isenabled()
+        search = INDEX_ALGORITHMS["binary"]
+        observed = []
+
+        def observe(values, target):
+            observed.append(gc.isenabled())
+            return search(values, target)
+
+        try:
+            for previous in (False, True):
+                for mode in ("disabled", "enabled"):
+                    with self.subTest(previous=previous, mode=mode):
+                        gc.enable() if previous else gc.disable()
+                        observed.clear()
+                        with patch.dict(INDEX_ALGORITHMS, {"binary": observe}):
+                            report = run_benchmarks(
+                                BenchmarkConfig(
+                                    sizes=(5,),
+                                    datasets=("uniform",),
+                                    algorithms=("binary",),
+                                    queries=2,
+                                    warmups=0,
+                                    repetitions=1,
+                                    gc_mode=mode,
+                                )
+                            )
+                        self.assertEqual(observed, [mode == "enabled"] * 2)
+                        self.assertEqual(gc.isenabled(), previous)
+                        self.assertEqual(report["results"][0]["gc_mode"], mode)
+            gc.enable()
+            with patch.dict(INDEX_ALGORITHMS, {"binary": lambda values, target: 1 / 0}):
+                with self.assertRaises(ZeroDivisionError):
+                    run_benchmarks(
+                        BenchmarkConfig(
+                            sizes=(5,),
+                            datasets=("uniform",),
+                            algorithms=("binary",),
+                            queries=1,
+                            warmups=0,
+                            repetitions=1,
+                        )
+                    )
+            self.assertTrue(gc.isenabled())
+        finally:
+            gc.enable() if original else gc.disable()
+
+    def test_linear_work_cap_reports_skip_and_explicit_override(self):
+        config = dict(
+            sizes=(10,),
+            datasets=("uniform",),
+            algorithms=("linear", "binary"),
+            queries=4,
+            repetitions=2,
+            warmups=1,
+        )
+        with patch.dict(
+            INDEX_ALGORITHMS,
+            {"linear": lambda values, target: self.fail("linear should be skipped")},
+        ):
+            report = run_benchmarks(BenchmarkConfig(**config, max_linear_work=1))
+        linear, binary = report["results"]
+        self.assertEqual(linear["status"], "skipped")
+        self.assertIn("estimated work 120", linear["reason"])
+        self.assertEqual(linear["lookup_samples_ns"], [])
+        self.assertIsNone(linear["total_median_ns"])
+        self.assertEqual(binary["status"], "complete")
+        unlimited = run_benchmarks(BenchmarkConfig(**config, max_linear_work=0, time_budget=0))
+        self.assertTrue(all(row["status"] == "complete" for row in unlimited["results"]))
+
+    def test_soft_budget_keeps_partial_samples_without_claiming_completion(self):
+        config = dict(
+            sizes=(5,),
+            datasets=("uniform",),
+            algorithms=("binary",),
+            queries=2,
+            repetitions=3,
+            time_budget=1,
+        )
+        for warmups, status, repetitions in ((0, "incomplete", 1), (1, "skipped", 0)):
+            with self.subTest(warmups=warmups):
+                with patch("search_algos.benchmarks.perf_counter", side_effect=[0, 2]):
+                    row = run_benchmarks(BenchmarkConfig(**config, warmups=warmups))["results"][0]
+                self.assertEqual(row["status"], status)
+                self.assertEqual(row["repetitions_completed"], repetitions)
+                self.assertEqual(row["completed_queries"], repetitions * 2)
+                self.assertEqual(row["warmups_completed"], warmups)
+                self.assertIn("soft time budget", row["reason"])
+
+    def test_new_limits_and_gc_options_are_validated(self):
+        for options in (
+            {"max_linear_work": -1},
+            {"max_linear_work": True},
+            {"time_budget": -1},
+            {"time_budget": float("nan")},
+            {"time_budget": float("inf")},
+            {"gc_mode": "auto"},
+        ):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                BenchmarkConfig(**options)
+
+    def test_adversarial_workload_contains_a_dense_prefix_and_deep_target(self):
+        workload = make_workload(1000, "adversarial", queries=10, hit_rate=0.5)
+        self.assertEqual(workload.values[:-1], tuple(range(0, 1998, 2)))
+        self.assertGreater(workload.values[-1], workload.values[-2] * 1000)
+        self.assertIn(workload.values[-2], workload.targets)
+        self.assertEqual(sum(index is not None for index in workload.expected_indices), 5)
+
+    def test_warm_parallel_reports_lifecycle_separately(self):
+        report = run_benchmarks(
+            BenchmarkConfig(
+                sizes=(10,),
+                datasets=("duplicates",),
+                algorithms=("parallel_warm",),
+                workers=2,
+                queries=4,
+                repetitions=2,
+                warmups=1,
+                time_budget=0,
+            )
+        )
+        row = report["results"][0]
+        self.assertEqual(row["status"], "complete")
+        self.assertEqual(row["timing_scope"], "batch_reused_pool")
+        self.assertEqual(row["lookup_median_ns"], row["total_median_ns"])
+        self.assertEqual(row["setup_samples_ns"], [0, 0])
+        self.assertGreater(row["pool_startup_ns"], 0)
+        self.assertGreater(row["pool_shutdown_ns"], 0)
+        self.assertEqual(row["repetitions_completed"], 2)
 
 
 if __name__ == "__main__":

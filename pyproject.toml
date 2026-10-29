@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "search-algos"
-version = "0.2.0"
+version = "0.3.0"
 description = "Reproducible benchmarks and pure implementations of search algorithms"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -26,5 +26,47 @@ classifiers = [
 [project.scripts]
 search-algos = "search_algos.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/dpittaluga76/search_algos"
+Repository = "https://github.com/dpittaluga76/search_algos"
+Issues = "https://github.com/dpittaluga76/search_algos/issues"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+    "coverage==7.16.2",
+]
+
 [tool.setuptools]
 packages = ["search_algos"]
+
+[tool.setuptools.package-data]
+search_algos = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.10"
+packages = ["search_algos"]
+strict = true
+
+[tool.coverage.run]
+source = ["search_algos"]
+branch = true
+parallel = true
+concurrency = ["multiprocessing"]
+patch = ["subprocess", "_exit"]
+sigterm = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.coverage.xml]
+output = "coverage.xml"

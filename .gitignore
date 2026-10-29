@@ -7,6 +7,10 @@ dist/
 *.egg-info/
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
+.mypy_cache/
+.ruff_cache/
 htmlcov/
 benchmark-smoke.json
 benchmark-smoke.csv

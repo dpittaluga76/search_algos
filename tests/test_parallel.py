@@ -1,18 +1,21 @@
 """Regression coverage using real spawn workers, including failure paths."""
 
-from concurrent.futures.process import BrokenProcessPool
 import contextlib
+import gc
 import io
 import multiprocessing
 import os
-from pathlib import Path
 import subprocess
 import sys
 import unittest
+from concurrent.futures.process import BrokenProcessPool
+from pathlib import Path
 from unittest.mock import patch
 
-from search_algos.algorithms import binary_search
+from search_algos.algorithms import binary_search, linear_search
 from search_algos.parallel import (
+    ParallelSearchPool,
+    _search_chunk,
     chunk_ranges,
     effective_worker_count,
     multiproc_test,
@@ -41,6 +44,34 @@ def abruptly_exit(values, target):
     os._exit(7)
 
 
+def abruptly_exit_on_ready():
+    os._exit(8)
+
+
+def reject_unrelated_chunk(values, target):
+    if target not in values:
+        raise RuntimeError("received a query for an unrelated chunk")
+    return binary_search(values, target)
+
+
+def earliest_duplicate_chunk_only(values, target):
+    if values[0] == 2:
+        raise RuntimeError("duplicate target routed to a later chunk")
+    return binary_search(values, target)
+
+
+def require_disabled_gc(values, target):
+    if gc.isenabled():
+        raise RuntimeError("worker GC was enabled")
+    return binary_search(values, target)
+
+
+def require_enabled_gc(values, target):
+    if not gc.isenabled():
+        raise RuntimeError("worker GC was disabled")
+    return binary_search(values, target)
+
+
 def verify_abrupt_failure():
     """Run in a bounded subprocess so a regression cannot hang the test suite."""
     try:
@@ -51,6 +82,17 @@ def verify_abrupt_failure():
         print("worker death propagated")
     else:
         raise AssertionError("abrupt worker failure was not propagated")
+
+    try:
+        with patch("search_algos.parallel._worker_ready", abruptly_exit_on_ready):
+            with ParallelSearchPool([1, 2, 3, 4], 2):
+                raise AssertionError("startup should have failed")
+    except BrokenProcessPool:
+        if multiprocessing.active_children():
+            raise AssertionError("startup failure left child processes running")
+        print("startup failure propagated")
+    else:
+        raise AssertionError("abrupt startup failure was not propagated")
 
 
 class PartitionTests(unittest.TestCase):
@@ -95,6 +137,40 @@ class PartitionTests(unittest.TestCase):
             self.assertEqual(parallel_search_many([1, 2], [], 2), [])
             self.assertIsNone(parallel_search([], 1, 2))
 
+    def test_outside_ranges_and_chunk_gaps_avoid_starting_a_pool(self):
+        with patch("search_algos.parallel.ProcessPoolExecutor", side_effect=AssertionError):
+            self.assertEqual(
+                parallel_search_many([1, 2, 10, 11], [0, 3, 9, 12], 2),
+                [None, None, None, None],
+            )
+
+    def test_pool_options_reject_non_boolean_values(self):
+        for option in ("route_targets", "disable_gc"):
+            for value in (0, 1, None, "false"):
+                with self.subTest(option=option, value=value), self.assertRaises(ValueError):
+                    ParallelSearchPool([], **{option: value})
+
+    def test_worker_search_restores_gc_state_after_failure(self):
+        original = gc.isenabled()
+        try:
+            for enabled in (True, False):
+                if enabled:
+                    gc.enable()
+                else:
+                    gc.disable()
+                for disabled_during_search in (True, False):
+                    with self.subTest(enabled=enabled, disabled=disabled_during_search):
+                        with self.assertRaisesRegex(RuntimeError, "worker search failed"):
+                            _search_chunk(
+                                [1, 2], [(0, 2)], 0, raising_search, disabled_during_search
+                            )
+                        self.assertEqual(gc.isenabled(), enabled)
+        finally:
+            if original:
+                gc.enable()
+            else:
+                gc.disable()
+
 
 class ParallelSearchTests(unittest.TestCase):
     def test_remainder_and_missing_targets(self):
@@ -108,6 +184,42 @@ class ParallelSearchTests(unittest.TestCase):
 
     def test_duplicates_return_first_global_index(self):
         self.assertEqual(parallel_search_many([1, 2, 2, 2, 2, 3], [2, 3], 4), [1, 5])
+
+    def test_routing_sends_only_queries_for_the_matching_chunk(self):
+        self.assertEqual(
+            parallel_search_many([1, 2, 3, 4, 5, 6], [6, 1, 4, 6, 2], 3, reject_unrelated_chunk),
+            [5, 0, 3, 5, 1],
+        )
+
+    def test_duplicate_boundary_routing_uses_earliest_eligible_chunk(self):
+        self.assertEqual(
+            parallel_search_many([1, 2, 2, 2, 2, 3], [2], 2, earliest_duplicate_chunk_only),
+            [1],
+        )
+
+    def test_broadcast_mode_supports_unsorted_custom_search(self):
+        self.assertEqual(
+            parallel_search_many(
+                [9, 1, 4, 2, 9, 3],
+                [9, 3, 1, 7],
+                2,
+                linear_search,
+                route_targets=False,
+            ),
+            [0, 5, 1, None],
+        )
+
+    def test_worker_gc_policy_is_explicit_and_parent_state_is_unchanged(self):
+        previous_gc = gc.isenabled()
+        self.assertEqual(
+            parallel_search([1, 2, 3, 4], 2, 2, require_disabled_gc, disable_gc=True),
+            1,
+        )
+        self.assertEqual(
+            parallel_search([1, 2, 3, 4], 3, 2, require_enabled_gc, disable_gc=False),
+            2,
+        )
+        self.assertEqual(gc.isenabled(), previous_gc)
 
     def test_more_workers_than_elements(self):
         self.assertEqual(parallel_search([1, 2], 2, 20), 1)
@@ -134,7 +246,7 @@ class ParallelSearchTests(unittest.TestCase):
         for search_func in (invalid_index_search, boolean_search, wrong_value_search):
             with self.subTest(search_func=search_func.__name__):
                 with self.assertRaisesRegex(ValueError, "matching index"):
-                    parallel_search([1, 2], 2, 2, search_func)
+                    parallel_search([1, 2, 3, 4], 2, 2, search_func)
 
     def test_abrupt_worker_failure_does_not_hang(self):
         root = Path(__file__).resolve().parents[1]
@@ -152,6 +264,52 @@ class ParallelSearchTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("worker death propagated", completed.stdout)
+        self.assertIn("startup failure propagated", completed.stdout)
+
+
+class ReusedPoolTests(unittest.TestCase):
+    def test_pool_starts_all_workers_and_reuses_them_across_batches(self):
+        before = {child.pid for child in multiprocessing.active_children()}
+        with ParallelSearchPool([1, 2, 2, 3, 4, 5], 2) as pool:
+            self.assertEqual(pool.worker_count, 2)
+            started = {child.pid for child in multiprocessing.active_children()} - before
+            self.assertEqual(len(started), 2)
+            self.assertEqual(pool.search_many([5, 2, 6]), [5, 1, None])
+            self.assertEqual(pool.search_many([1, 4, 2, 2]), [0, 4, 1, 1])
+            self.assertEqual(
+                {child.pid for child in multiprocessing.active_children()} - before,
+                started,
+            )
+        self.assertEqual({child.pid for child in multiprocessing.active_children()}, before)
+
+    def test_reused_worker_gc_policy(self):
+        with ParallelSearchPool([1, 2, 3, 4], 2, require_disabled_gc, disable_gc=True) as pool:
+            self.assertEqual(pool.search_many([1, 4]), [0, 3])
+            self.assertEqual(pool.search_many([2, 3]), [1, 2])
+
+    def test_pool_failure_closes_workers_even_if_caller_catches_error(self):
+        before = {child.pid for child in multiprocessing.active_children()}
+        with ParallelSearchPool([1, 2, 3, 4], 2, raising_search) as pool:
+            with self.assertRaisesRegex(RuntimeError, "worker search failed"):
+                pool.search_many([2])
+            self.assertEqual({child.pid for child in multiprocessing.active_children()}, before)
+            with self.assertRaisesRegex(RuntimeError, "active search-pool"):
+                pool.search_many([2])
+
+    def test_empty_pool_and_lifecycle(self):
+        pool = ParallelSearchPool([], 2)
+        with self.assertRaisesRegex(RuntimeError, "active search-pool"):
+            pool.search_many([])
+        with patch("search_algos.parallel.ProcessPoolExecutor", side_effect=AssertionError):
+            with pool:
+                self.assertEqual(pool.worker_count, 0)
+                self.assertEqual(pool.search_many([1, 2]), [None, None])
+                self.assertEqual(pool.search_many([]), [])
+        pool.close()
+        with self.assertRaisesRegex(RuntimeError, "active search-pool"):
+            pool.search_many([])
+        with self.assertRaisesRegex(RuntimeError, "only be entered once"):
+            pool.__enter__()
 
 
 if __name__ == "__main__":

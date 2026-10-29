@@ -1,8 +1,14 @@
 """Optional display/profiling helpers, separate from the search algorithms."""
 
 import cProfile
+from collections.abc import Callable
 from functools import wraps
 from time import perf_counter
+from typing import ParamSpec, TypeVar
+
+P = ParamSpec("P")
+R = TypeVar("R")
+SearchResult = TypeVar("SearchResult", bound=int | None)
 
 
 def format_result(result: int | bool | None) -> str:
@@ -14,10 +20,11 @@ def format_result(result: int | bool | None) -> str:
     return f"found at index {result}"
 
 
-def show_runtime_and_result(func):
+def show_runtime_and_result(func: Callable[P, SearchResult]) -> Callable[P, SearchResult]:
     """Time one complete call, print its result, and preserve its return value."""
+
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> SearchResult:
         start = perf_counter()
         result = func(*args, **kwargs)
         elapsed = perf_counter() - start
@@ -27,10 +34,11 @@ def show_runtime_and_result(func):
     return wrapper
 
 
-def profile_this(func):
+def profile_this(func: Callable[P, R]) -> Callable[P, R]:
     """Profile one complete call, restoring profiler state even on failure."""
+
     @wraps(func)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         profiler = cProfile.Profile()
         profiler.enable()
         try:

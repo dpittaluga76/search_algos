@@ -37,7 +37,12 @@ class TimingTests(unittest.TestCase):
         self.assertNotIn("found at index", output.getvalue())
 
     def test_formatter(self):
-        for result, expected in [(None, "not found"), (0, "found at index 0"), (True, "present"), (False, "absent")]:
+        for result, expected in [
+            (None, "not found"),
+            (0, "found at index 0"),
+            (True, "present"),
+            (False, "absent"),
+        ]:
             self.assertEqual(format_result(result), expected)
 
     def test_profiler_returns_result(self):
