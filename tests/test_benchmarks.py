@@ -6,7 +6,9 @@ import statistics
 import unittest
 from unittest.mock import patch
 
+from search_algos.algorithms import build_radix_index
 from search_algos.benchmarks import (
+    ALGORITHM_NAMES,
     DATASET_NAMES,
     DEFAULT_ALGORITHMS,
     DEFAULT_DATASETS,
@@ -16,6 +18,7 @@ from search_algos.benchmarks import (
     run_benchmarks,
     verify_results,
 )
+from search_algos.comparison import compare_reports
 
 
 class WorkloadTests(unittest.TestCase):
@@ -61,6 +64,111 @@ class WorkloadTests(unittest.TestCase):
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_radix_is_selected_by_default_and_available_once_in_all(self):
+        self.assertIn("radix", ALGORITHM_NAMES)
+        self.assertIn("radix", DEFAULT_ALGORITHMS)
+        self.assertIn("radix", BenchmarkConfig().algorithms)
+        self.assertEqual(ALGORITHM_NAMES.count("radix"), 1)
+        self.assertNotIn("radix", INDEX_ALGORITHMS)
+        self.assertEqual(BenchmarkConfig(algorithms=("radix",)).algorithms, ("radix",))
+
+    def test_radix_benchmark_validates_all_distributions_and_compares(self):
+        report = run_benchmarks(
+            BenchmarkConfig(
+                sizes=(0, 1, 40, 1000),
+                datasets=DATASET_NAMES,
+                algorithms=("radix",),
+                queries=16,
+                repetitions=2,
+                warmups=1,
+                time_budget=0,
+            )
+        )
+        self.assertEqual(len(report["results"]), 4 * len(DATASET_NAMES))
+        for row in report["results"]:
+            with self.subTest(size=row["size"], dataset=row["dataset"]):
+                self.assertEqual(row["status"], "complete")
+                self.assertEqual(row["result_kind"], "first_index")
+                self.assertEqual(row["timing_scope"], "lookup_batch")
+                self.assertEqual(row["effective_workers"], 0)
+                self.assertEqual(row["repetitions_completed"], 2)
+                self.assertEqual(row["warmups_completed"], 1)
+                self.assertEqual(len(row["setup_samples_ns"]), 2)
+                self.assertEqual(len(row["lookup_samples_ns"]), 2)
+                totals = [
+                    setup + lookup
+                    for setup, lookup in zip(row["setup_samples_ns"], row["lookup_samples_ns"])
+                ]
+                self.assertEqual(row["total_median_ns"], statistics.median(totals))
+        compared = compare_reports(report, report)
+        self.assertEqual(len(compared["comparisons"]), len(report["results"]))
+        self.assertTrue(all(row["status"] == "compared" for row in compared["comparisons"]))
+        self.assertTrue(all(row["speedup"] == 1 for row in compared["comparisons"]))
+
+    def test_radix_build_and_lookup_have_separate_timers_each_batch(self):
+        ticks = iter((0, 30, 50, 150, 200, 240, 250, 360, 400, 450, 470, 590))
+        timer_calls = []
+        lookups = []
+
+        def timer():
+            timer_calls.append(None)
+            return next(ticks)
+
+        def prepare(values):
+            self.assertEqual(len(timer_calls) % 4, 1)
+            self.assertFalse(gc.isenabled())
+            search = build_radix_index(values)
+
+            def lookup(target):
+                self.assertEqual(len(timer_calls) % 4, 3)
+                self.assertFalse(gc.isenabled())
+                lookups.append(target)
+                return search(target)
+
+            return lookup
+
+        def verify_after_timing(algorithm, results, workload):
+            self.assertEqual(len(timer_calls) % 4, 0)
+            verify_results(algorithm, results, workload)
+
+        with (
+            patch("search_algos.benchmarks.perf_counter_ns", side_effect=timer),
+            patch("search_algos.benchmarks.build_radix_index", side_effect=prepare) as builder,
+            patch("search_algos.benchmarks.verify_results", side_effect=verify_after_timing),
+        ):
+            report = run_benchmarks(
+                BenchmarkConfig(
+                    sizes=(10,),
+                    datasets=("uniform",),
+                    algorithms=("radix",),
+                    queries=4,
+                    repetitions=2,
+                    warmups=1,
+                    time_budget=0,
+                )
+            )
+        row = report["results"][0]
+        self.assertEqual(builder.call_count, 3)
+        self.assertEqual(len(lookups), 12)
+        self.assertEqual(row["setup_samples_ns"], [40, 50])
+        self.assertEqual(row["lookup_samples_ns"], [110, 120])
+        self.assertEqual(row["total_median_ns"], 160)
+
+    def test_incorrect_radix_lookup_aborts_the_benchmark(self):
+        with patch("search_algos.benchmarks.build_radix_index", return_value=lambda target: None):
+            with self.assertRaisesRegex(RuntimeError, "radix returned"):
+                run_benchmarks(
+                    BenchmarkConfig(
+                        sizes=(10,),
+                        datasets=("duplicates",),
+                        algorithms=("radix",),
+                        queries=4,
+                        hit_rate=1,
+                        repetitions=1,
+                        warmups=0,
+                    )
+                )
+
     def test_invalid_configuration_is_rejected(self):
         invalid = [
             {"sizes": ()},
@@ -107,7 +215,7 @@ class BenchmarkTests(unittest.TestCase):
             self.assertEqual(row["total_median_ns"], statistics.median(total))
             self.assertGreaterEqual(row["lookup_iqr_ns"], 0)
             self.assertEqual(row["per_query_median_ns"], row["lookup_median_ns"] / 8)
-            if row["algorithm"] not in ("set", "dict"):
+            if row["algorithm"] not in ("set", "dict", "radix"):
                 self.assertEqual(row["setup_samples_ns"], [0, 0])
             if row["size"] == 0:
                 self.assertEqual(row["actual_hit_rate"], 0)
@@ -255,20 +363,26 @@ class BenchmarkTests(unittest.TestCase):
         config = dict(
             sizes=(5,),
             datasets=("uniform",),
-            algorithms=("binary",),
             queries=2,
             repetitions=3,
             time_budget=1,
         )
-        for warmups, status, repetitions in ((0, "incomplete", 1), (1, "skipped", 0)):
-            with self.subTest(warmups=warmups):
-                with patch("search_algos.benchmarks.perf_counter", side_effect=[0, 2]):
-                    row = run_benchmarks(BenchmarkConfig(**config, warmups=warmups))["results"][0]
-                self.assertEqual(row["status"], status)
-                self.assertEqual(row["repetitions_completed"], repetitions)
-                self.assertEqual(row["completed_queries"], repetitions * 2)
-                self.assertEqual(row["warmups_completed"], warmups)
-                self.assertIn("soft time budget", row["reason"])
+        for algorithm in ("binary", "radix"):
+            for warmups, status, repetitions in ((0, "incomplete", 1), (1, "skipped", 0)):
+                with self.subTest(algorithm=algorithm, warmups=warmups):
+                    with patch("search_algos.benchmarks.perf_counter", side_effect=[0, 2]):
+                        report = run_benchmarks(
+                            BenchmarkConfig(**config, algorithms=(algorithm,), warmups=warmups)
+                        )
+                    row = report["results"][0]
+                    self.assertEqual(row["status"], status)
+                    self.assertEqual(row["repetitions_completed"], repetitions)
+                    self.assertEqual(row["completed_queries"], repetitions * 2)
+                    self.assertEqual(row["warmups_completed"], warmups)
+                    self.assertIn("soft time budget", row["reason"])
+                    self.assertEqual(
+                        compare_reports(report, report)["comparisons"][0]["status"], status
+                    )
 
     def test_new_limits_and_gc_options_are_validated(self):
         for options in (

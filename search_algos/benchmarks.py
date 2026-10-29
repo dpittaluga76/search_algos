@@ -1,8 +1,9 @@
 """Reproducible, bounded benchmarks with explicit timing and GC policies.
 
 Workload creation and correctness checks are outside the timers. Set/dictionary
-construction is measured separately. Cold parallel batches include the whole
-pool lifecycle; warm batches reuse workers and report their lifecycle separately.
+and radix-directory construction are measured separately. Cold parallel batches
+include the whole pool lifecycle; warm batches reuse workers and report their
+lifecycle separately.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from .algorithms import (
     binary_search_by_recursion,
     binary_search_std_lib,
     build_first_index,
+    build_radix_index,
     exponential_search,
     interpolation_search,
     interpolation_search_hybrid,
@@ -47,7 +49,7 @@ INDEX_ALGORITHMS: dict[str, Callable[[Sequence[int], int], int | None]] = {
     "exponential": exponential_search,
     "jump": jump_search,
 }
-DEFAULT_ALGORITHMS = (*INDEX_ALGORITHMS, "set", "dict")
+DEFAULT_ALGORITHMS = (*INDEX_ALGORITHMS, "set", "dict", "radix")
 ALGORITHM_NAMES = (*DEFAULT_ALGORITHMS, "parallel", "parallel_warm")
 DEFAULT_DATASETS = ("uniform", "gapped", "duplicates", "skewed")
 DATASET_NAMES = (*DEFAULT_DATASETS, "adversarial")
@@ -192,6 +194,12 @@ def _measure_batch(
             setup_ns = perf_counter_ns() - start
             start = perf_counter_ns()
             results = [first_indices.get(target) for target in workload.targets]
+        elif algorithm == "radix":
+            start = perf_counter_ns()
+            radix_lookup = build_radix_index(workload.values)
+            setup_ns = perf_counter_ns() - start
+            start = perf_counter_ns()
+            results = [radix_lookup(target) for target in workload.targets]
         elif algorithm == "parallel":
             start = perf_counter_ns()
             results = parallel_search_many(

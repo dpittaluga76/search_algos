@@ -27,11 +27,12 @@ python -m pip install .
 search-algos --size 1000 --algorithms binary bisect interpolation
 ```
 
-The default run uses 1,000 elements, four dataset distributions, ten sequential
+The default run uses 1,000 elements, four dataset distributions, eleven sequential
 algorithms, 100 queries per batch, one warmup batch, seven measured batches, and
-seed 0. Cyclic garbage collection is disabled during measurements. The
-adversarial dataset and both multiprocessing modes are opt-in. Process startup
-usually costs much more than a single binary search.
+seed 0. Cyclic garbage collection is disabled during measurements. The radix
+directory is included by default. The adversarial dataset and both
+multiprocessing modes are opt-in. Process startup usually costs much more than
+a single binary search.
 
 ## Command-line options
 
@@ -39,7 +40,7 @@ usually costs much more than a single binary search.
 | --- | --- | --- |
 | `--size`, `--sizes` | One or more nonnegative dataset sizes | `1000` |
 | `--datasets` | One or more of `uniform`, `gapped`, `duplicates`, `skewed`, `adversarial` | All except `adversarial` |
-| `--algorithms` | One or more names from the list below; use `all` alone for all twelve | Ten sequential algorithms |
+| `--algorithms` | One or more names from the list below; use `all` alone for all thirteen | Eleven sequential algorithms, including radix |
 | `--seed` | Integer random seed | `0` |
 | `--repetitions` | Positive number of measured batches | `7` |
 | `--warmups` | Nonnegative number of discarded warmup batches | `1` |
@@ -57,7 +58,7 @@ has no successful queries, regardless of the requested hit rate. Other hit
 counts are rounded to a whole number of queries. Worker counts are capped by
 the number of elements, and by 61 on Windows. Algorithm names are `linear`,
 `binary`, `bisect`, `recursive`, `interpolation`, `interpolation_hybrid`,
-`exponential`, `jump`, `set`, `dict`, `parallel`, and `parallel_warm`.
+`exponential`, `jump`, `set`, `dict`, `radix`, `parallel`, and `parallel_warm`.
 
 The work limit prevents unexpectedly expensive linear scans before they start.
 The time budget includes warmups and is checked between batches: it cannot
@@ -72,6 +73,18 @@ Export a reproducible comparison:
 python -m search_algos --size 1000 10000 --datasets uniform duplicates skewed --seed 42 --format json --output results.json
 python -m search_algos --size 1000 --datasets gapped --algorithms binary set --format csv --output results.csv
 ```
+
+Compare the radix directory with full-range bisection and a dictionary
+on a larger batch of repeated queries:
+
+```console
+python -m search_algos --size 100000 --datasets uniform gapped duplicates --algorithms bisect radix dict --queries 20000 --seed 42
+```
+
+Radix construction appears under setup, and each query batch reuses that
+directory. Compare lookup costs for an already-prepared index and total costs
+when construction is part of your application. Short query batches may not
+amortize the setup cost.
 
 Include the full cost of multiprocessing:
 
@@ -158,6 +171,7 @@ assert find_by_sets(values, 9) is False
 | `find_by_sets` | Iterable of hashable values and a hashable target | `True` or `False` |
 | `build_first_index` | Iterable of hashable values; sorting is unnecessary | Dictionary mapping each value to its first index |
 | `find_by_dict` | Iterable of hashable values and a hashable target | First matching index, or `None`; builds an index for this call |
+| `build_radix_index` | Ascending sorted integer sequence, unchanged while the index is in use; integer targets | Reusable callable returning the first matching index, or `None` |
 
 Sorted-input requirements are preconditions: the functions do not sort or scan
 the input to validate ordering, since that would change the cost being measured.
@@ -177,9 +191,42 @@ assert index.get(3) == 0
 assert index.get(9) is None
 ```
 
-The benchmark's `set` and `dict` rows measure construction separately from the
-subsequent query batch. The dictionary baseline returns first indices, making
-its result contract match the index-search algorithms.
+The benchmark's `set`, `dict`, and `radix` rows measure construction separately
+from the subsequent query batch. The dictionary and radix indexes return first
+indices, matching the other index-search algorithms.
+
+Build a radix directory once for repeated lookups on a static integer sequence:
+
+```python
+from search_algos import build_radix_index
+
+values = (-5, 1, 3, 3, 8)
+lookup = build_radix_index(values)
+assert lookup(3) == 2
+assert lookup(-5) == 0
+assert lookup(4) is None
+```
+
+The directory partitions the value range into at most 4,096 buckets. Each
+lookup calculates its bucket using subtraction and a bit shift, then calls
+`bisect_left` within that bucket. Equal values share a bucket, preserving the
+first matching index even with duplicates. Empty inputs, negative values, and
+arbitrarily large integers are supported.
+
+The optional `bits` argument defaults to `12` and accepts integers from `0` to
+`12`, excluding Booleans. It caps the directory at `2**bits` buckets; `bits=0`
+uses a single bucket. The benchmark uses the default. For fixed-width integers,
+building `B` buckets takes O(B log n) time and O(B) extra storage, without copying
+the input or scanning it to validate ordering or types. Sorted integer input
+and integer targets are preconditions. Do not mutate the sequence while using
+the returned callable; rebuild the index after changing it.
+
+Lookup takes O(log(m + 1)) search steps for a bucket containing `m` values, with
+O(log n) worst-case search time. A directory can reduce lookup work on large,
+well-spread integer data, but setup may dominate short batches. Skewed data or
+outliers can concentrate most values in one bucket and make radix slower than
+full-range bisection. Including it in the default benchmark does not imply a
+universal speedup guarantee.
 
 Plain interpolation remains available to demonstrate distribution-sensitive
 performance. The hybrid attempts at most `len(input_list).bit_length()`
@@ -278,10 +325,11 @@ single repetition. Every measured batch is checked against expected results
 after timing, and an incorrect result aborts the run. Algorithm order rotates
 between repetitions to reduce bias from always running the same algorithm first.
 
-Set and first-index dictionary construction are timed separately on every
-repetition. Total cost combines per-batch preparation and lookup, making the
-query count relevant to how construction cost is amortized. Sequential lookups
-include the Python loop that executes the queries.
+Set, first-index dictionary, and radix directory construction are timed
+separately on every warmup and measured repetition. Total cost combines
+per-batch preparation and lookup, making the query count relevant to how
+construction cost is amortized. Sequential lookups include the Python loop
+that executes the queries.
 
 `parallel` measures cold calls including routing, process startup, serialization,
 result aggregation, and pool shutdown for each batch. It may start fewer workers
@@ -316,7 +364,7 @@ each result and encodes sample lists as JSON within cells. The schema version is
 | --- | --- |
 | `status`, `reason` | `complete`, `incomplete`, or `skipped`, plus an explanation when work was limited |
 | `repetitions_completed`, `warmups_completed` | Number of completed measured and warmup batches |
-| `setup_median_ns` | Median set/dictionary construction cost; zero for other algorithms |
+| `setup_median_ns` | Median set/dictionary/radix-directory construction cost; zero for other algorithms |
 | `lookup_median_ns` | Median time for a complete batch of queries |
 | `total_median_ns` | Median of each repetition's setup plus lookup time |
 | `setup_iqr_ns`, `lookup_iqr_ns`, `total_iqr_ns` | Variability in each measured phase |

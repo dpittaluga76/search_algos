@@ -1,13 +1,13 @@
 """Quiet search functions with explicit, consistent result contracts.
 
 Index searches return the first matching index, or ``None``. Binary,
-interpolation, exponential, and jump searches require ascending sorted input.
+interpolation, exponential, jump, and prepared radix searches require ascending sorted input.
 Linear search and the hash-based helpers also accept unsorted input. Sorting and
 input validation are left to callers so they do not become part of lookup cost.
 """
 
 from bisect import bisect_left
-from collections.abc import Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from math import isqrt
 from typing import Any, Protocol, TypeVar
 
@@ -262,6 +262,56 @@ def jump_search(input_list: Sequence[C], lookup_value: C) -> int | None:
         if lookup_value < current:
             break
     return None
+
+
+def build_radix_index(input_list: Sequence[int], *, bits: int = 12) -> Callable[[int], int | None]:
+    """Prepare a radix directory for repeated first-index integer lookups.
+
+    Input must be sorted ascending and both values and lookup targets must be
+    integers. These are preconditions: construction does not scan, validate, or
+    copy the sequence. The returned callable retains the sequence; do not mutate
+    it until all lookups are finished. Rebuild the index after changing input.
+
+    ``bits`` must be an integer from 0 through 12, excluding Boolean values.
+    At most ``2**bits`` buckets are created (4,096 by default); zero bits uses
+    one bucket. Lower-bound directory entries keep duplicate runs together.
+    Each lookup rejects targets outside the value range, then uses ``bisect``
+    inside the target's bucket and verifies equality before returning an index.
+
+    Construction uses O(B log n) sequence accesses and O(B) extra storage for B
+    buckets. Lookup uses O(log(m + 1)) accesses for a bucket of m values, O(log n)
+    in the worst case. Outliers or skewed values can leave most data in one
+    bucket, and small query batches may not repay the construction cost.
+
+    >>> lookup = build_radix_index([-5, 1, 1, 8])
+    >>> lookup(1)
+    1
+    >>> lookup(-5)
+    0
+    >>> lookup(3)
+    >>> build_radix_index([])(1)
+    """
+    if type(bits) is not int or not 0 <= bits <= 12:
+        raise ValueError("bits must be an integer between 0 and 12")
+    if not input_list:
+        return lambda target: None
+
+    lower, upper = input_list[0], input_list[-1]
+    shift = max(0, (upper - lower).bit_length() - bits)
+    bucket_count = ((upper - lower) >> shift) + 1
+    offsets = [
+        bisect_left(input_list, lower + (bucket << shift)) for bucket in range(bucket_count + 1)
+    ]
+
+    def lookup(target: int) -> int | None:
+        if target < lower or target > upper:
+            return None
+        bucket = (target - lower) >> shift
+        stop = offsets[bucket + 1]
+        index = bisect_left(input_list, target, offsets[bucket], stop)
+        return index if index < stop and input_list[index] == target else None
+
+    return lookup
 
 
 def build_first_index(input_list: Iterable[H]) -> dict[H, int]:

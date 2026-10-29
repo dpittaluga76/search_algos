@@ -142,7 +142,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("error:", completed.stderr)
             self.assertNotIn("Traceback", completed.stderr)
 
-    def test_all_algorithms_include_parallel_in_a_real_cli_run(self):
+    def test_all_algorithms_include_radix_and_parallel_in_a_real_cli_run(self):
         for script in (False, True):
             with self.subTest(script=script):
                 completed = self.run_cli(
@@ -169,15 +169,122 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 rows = json.loads(completed.stdout)["results"]
                 self.assertEqual(len(rows), len(ALGORITHM_NAMES))
+                radix = next(row for row in rows if row["algorithm"] == "radix")
+                self.assertEqual(radix["result_kind"], "first_index")
+                self.assertEqual(radix["timing_scope"], "lookup_batch")
                 parallel = next(row for row in rows if row["algorithm"] == "parallel")
                 self.assertEqual(parallel["effective_workers"], 2)
                 self.assertEqual(parallel["timing_scope"], "batch_with_process_startup")
                 self.assertEqual(parallel["hits"], 2)
 
+    def test_default_algorithms_include_radix_with_the_existing_sequential_algorithms(self):
+        completed = self.run_cli(
+            "--size",
+            "0",
+            "--datasets",
+            "uniform",
+            "--queries",
+            "2",
+            "--repetitions",
+            "1",
+            "--warmups",
+            "0",
+            "--format",
+            "json",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        algorithms = {row["algorithm"] for row in json.loads(completed.stdout)["results"]}
+        self.assertEqual(
+            algorithms,
+            {
+                "linear",
+                "binary",
+                "bisect",
+                "recursive",
+                "interpolation",
+                "interpolation_hybrid",
+                "exponential",
+                "jump",
+                "set",
+                "dict",
+                "radix",
+            },
+        )
+
+    def test_radix_exports_and_saved_comparison_preserve_setup_and_result_contract(self):
+        arguments = [
+            "--size",
+            "128",
+            "--datasets",
+            "duplicates",
+            "--algorithms",
+            "bisect",
+            "radix",
+            "dict",
+            "--queries",
+            "6",
+            "--repetitions",
+            "2",
+            "--warmups",
+            "1",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "radix.json"
+            for output_format in ("text", "json", "csv"):
+                with self.subTest(output_format=output_format):
+                    completed = self.run_cli(*arguments, "--format", output_format)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    if output_format == "text":
+                        self.assertIn("radix-directory construction", completed.stdout)
+                        self.assertEqual(completed.stdout.count("Result: first_index"), 1)
+                        self.assertIn("Timing scope: lookup_batch", completed.stdout)
+                        for algorithm in ("bisect", "radix", "dict"):
+                            self.assertTrue(
+                                any(
+                                    line.startswith(algorithm + " ")
+                                    for line in completed.stdout.splitlines()
+                                )
+                            )
+                        continue
+                    if output_format == "json":
+                        source.write_text(completed.stdout, encoding="utf-8")
+                        rows = json.loads(completed.stdout)["results"]
+                        radix = next(row for row in rows if row["algorithm"] == "radix")
+                        setup_samples = radix["setup_samples_ns"]
+                        lookup_samples = radix["lookup_samples_ns"]
+                    else:
+                        rows = list(csv.DictReader(io.StringIO(completed.stdout)))
+                        radix = next(row for row in rows if row["algorithm"] == "radix")
+                        setup_samples = json.loads(radix["setup_samples_ns"])
+                        lookup_samples = json.loads(radix["lookup_samples_ns"])
+                    self.assertEqual(
+                        {row["algorithm"] for row in rows}, {"bisect", "radix", "dict"}
+                    )
+                    self.assertEqual(len({row["workload_id"] for row in rows}), 1)
+                    self.assertEqual(radix["result_kind"], "first_index")
+                    self.assertEqual(radix["timing_scope"], "lookup_batch")
+                    self.assertEqual(radix["status"], "complete")
+                    self.assertEqual(len(setup_samples), 2)
+                    self.assertEqual(len(lookup_samples), 2)
+                    self.assertTrue(
+                        all(type(sample) is int and sample >= 0 for sample in setup_samples)
+                    )
+            for metric in ("total", "lookup"):
+                compared = self.run_cli(
+                    "compare", str(source), str(source), "--metric", metric, "--format", "json"
+                )
+                self.assertEqual(compared.returncode, 0, compared.stderr)
+                rows = json.loads(compared.stdout)["comparisons"]
+                self.assertEqual({row["algorithm"] for row in rows}, {"bisect", "radix", "dict"})
+                self.assertTrue(
+                    all(row["status"] == "compared" and row["speedup"] == 1 for row in rows)
+                )
+
     def test_help_and_text_report(self):
         help_result = self.run_cli("--help")
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--repetitions", help_result.stdout)
+        self.assertIn("defaults include radix", help_result.stdout)
         completed = self.run_cli(*SMALL_RUN)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("lookup IQR", completed.stdout)
