@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(*ALGORITHM_NAMES, "all"),
         nargs="+",
         default=list(DEFAULT_ALGORITHMS),
-        help="algorithms to measure; defaults include radix; all also includes multiprocessing",
+        help="algorithms to measure; defaults include radix; all also includes prepared alternatives and multiprocessing",
     )
     parser.add_argument("--seed", type=int, default=0, help="workload seed")
     parser.add_argument("--repetitions", type=int, default=7, help="measured batches per algorithm")
@@ -121,7 +121,7 @@ def render_report(report: dict[str, Any], output_format: str) -> str:
         f"Python {metadata['python_version']} ({metadata['python_implementation']}) | {metadata['platform']}",
         f"Seed {config['seed']} | {config['repetitions']} measured batches | {config['queries']} queries/batch | {config['warmups']} warmups",
         "Batch times are milliseconds; IQR is the interquartile range of lookup times.",
-        "Set, dictionary, and radix-directory construction appear under setup; total includes per-batch setup and lookup.",
+        "Set, dictionary, and radix-directory construction and other index preparation appear under setup; total includes per-batch setup and lookup.",
         f"Cyclic GC during measurement: {config.get('gc_mode', 'unspecified')}.",
         "Rankings compare completed rows within the same workload, result kind, and timing scope.",
     ]

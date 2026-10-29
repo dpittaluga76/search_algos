@@ -13,6 +13,7 @@ from search_algos.benchmarks import ALGORITHM_NAMES
 from search_algos.cli import render_report
 
 ROOT = Path(__file__).resolve().parents[1]
+PREPARED_ALGORITHMS = ("neighbor_prepared", "dict_reverse", "guarded_prepared", "adaptive_index")
 SMALL_RUN = [
     "--size",
     "0",
@@ -169,6 +170,10 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 rows = json.loads(completed.stdout)["results"]
                 self.assertEqual(len(rows), len(ALGORITHM_NAMES))
+                names = [row["algorithm"] for row in rows]
+                self.assertEqual(len(names), len(set(names)))
+                for algorithm in PREPARED_ALGORITHMS:
+                    self.assertEqual(names.count(algorithm), 1)
                 radix = next(row for row in rows if row["algorithm"] == "radix")
                 self.assertEqual(radix["result_kind"], "first_index")
                 self.assertEqual(radix["timing_scope"], "lookup_batch")
@@ -285,11 +290,78 @@ class CliTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0)
         self.assertIn("--repetitions", help_result.stdout)
         self.assertIn("defaults include radix", help_result.stdout)
+        self.assertIn("prepared alternatives", help_result.stdout)
         completed = self.run_cli(*SMALL_RUN)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("lookup IQR", completed.stdout)
         self.assertIn("set", completed.stdout)
         self.assertNotIn("found at positions", completed.stdout)
+
+    def test_prepared_alternatives_export_and_compare_without_replacing_baselines(self):
+        arguments = [
+            "--size",
+            "128",
+            "--datasets",
+            "gapped",
+            "--algorithms",
+            "bisect",
+            "dict",
+            *PREPARED_ALGORITHMS,
+            "--queries",
+            "6",
+            "--repetitions",
+            "2",
+            "--warmups",
+            "1",
+        ]
+        expected_algorithms = {"bisect", "dict", *PREPARED_ALGORITHMS}
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "prepared.json"
+            for output_format in ("text", "json", "csv"):
+                with self.subTest(output_format=output_format):
+                    completed = self.run_cli(*arguments, "--format", output_format)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    if output_format == "text":
+                        self.assertIn("other index preparation", completed.stdout)
+                        self.assertEqual(completed.stdout.count("Result: first_index"), 1)
+                        for algorithm in expected_algorithms:
+                            self.assertTrue(
+                                any(
+                                    line.startswith(algorithm + " ")
+                                    for line in completed.stdout.splitlines()
+                                )
+                            )
+                        continue
+                    if output_format == "json":
+                        source.write_text(completed.stdout, encoding="utf-8")
+                        rows = json.loads(completed.stdout)["results"]
+                    else:
+                        rows = list(csv.DictReader(io.StringIO(completed.stdout)))
+                    self.assertEqual({row["algorithm"] for row in rows}, expected_algorithms)
+                    self.assertEqual(len(rows), len(expected_algorithms))
+                    self.assertEqual(len({row["workload_id"] for row in rows}), 1)
+                    for row in rows:
+                        self.assertEqual(row["result_kind"], "first_index")
+                        self.assertEqual(row["timing_scope"], "lookup_batch")
+                        self.assertEqual(row["status"], "complete")
+                        for field in ("setup_samples_ns", "lookup_samples_ns"):
+                            samples = (
+                                json.loads(row[field]) if output_format == "csv" else row[field]
+                            )
+                            self.assertEqual(len(samples), 2)
+                            self.assertTrue(
+                                all(type(sample) is int and sample >= 0 for sample in samples)
+                            )
+            for metric in ("total", "lookup"):
+                compared = self.run_cli(
+                    "compare", str(source), str(source), "--metric", metric, "--format", "json"
+                )
+                self.assertEqual(compared.returncode, 0, compared.stderr)
+                rows = json.loads(compared.stdout)["comparisons"]
+                self.assertEqual({row["algorithm"] for row in rows}, expected_algorithms)
+                self.assertTrue(
+                    all(row["status"] == "compared" and row["speedup"] == 1 for row in rows)
+                )
 
     def test_text_report_ranks_within_each_workload(self):
         report = benchmark_report(

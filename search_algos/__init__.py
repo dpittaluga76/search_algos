@@ -19,6 +19,12 @@ from .algorithms import (
     linear_search,
 )
 from .parallel import ParallelSearchPool, multiproc_test, parallel_search, parallel_search_many
+from .prepared import (
+    build_adaptive_index,
+    build_first_index_reversed,
+    build_guarded_index,
+    build_neighbor_index,
+)
 from .timing import profile_this, show_runtime_and_result
 
 __all__ = [
@@ -40,4 +46,8 @@ __all__ = [
     "jump_search",
     "interpolation_search_hybrid",
     "ParallelSearchPool",
+    "build_neighbor_index",
+    "build_first_index_reversed",
+    "build_guarded_index",
+    "build_adaptive_index",
 ]

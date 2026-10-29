@@ -30,9 +30,9 @@ search-algos --size 1000 --algorithms binary bisect interpolation
 The default run uses 1,000 elements, four dataset distributions, eleven sequential
 algorithms, 100 queries per batch, one warmup batch, seven measured batches, and
 seed 0. Cyclic garbage collection is disabled during measurements. The radix
-directory is included by default. The adversarial dataset and both
-multiprocessing modes are opt-in. Process startup usually costs much more than
-a single binary search.
+directory is included by default. The four prepared alternatives described
+below, the adversarial dataset, and both multiprocessing modes are opt-in.
+Process startup usually costs much more than a single binary search.
 
 ## Command-line options
 
@@ -40,7 +40,7 @@ a single binary search.
 | --- | --- | --- |
 | `--size`, `--sizes` | One or more nonnegative dataset sizes | `1000` |
 | `--datasets` | One or more of `uniform`, `gapped`, `duplicates`, `skewed`, `adversarial` | All except `adversarial` |
-| `--algorithms` | One or more names from the list below; use `all` alone for all thirteen | Eleven sequential algorithms, including radix |
+| `--algorithms` | One or more names from the list below; use `all` alone for all seventeen | Eleven sequential algorithms, including radix |
 | `--seed` | Integer random seed | `0` |
 | `--repetitions` | Positive number of measured batches | `7` |
 | `--warmups` | Nonnegative number of discarded warmup batches | `1` |
@@ -58,7 +58,8 @@ has no successful queries, regardless of the requested hit rate. Other hit
 counts are rounded to a whole number of queries. Worker counts are capped by
 the number of elements, and by 61 on Windows. Algorithm names are `linear`,
 `binary`, `bisect`, `recursive`, `interpolation`, `interpolation_hybrid`,
-`exponential`, `jump`, `set`, `dict`, `radix`, `parallel`, and `parallel_warm`.
+`exponential`, `jump`, `set`, `dict`, `radix`, `neighbor_prepared`, `dict_reverse`,
+`guarded_prepared`, `adaptive_index`, `parallel`, and `parallel_warm`.
 
 The work limit prevents unexpectedly expensive linear scans before they start.
 The time budget includes warmups and is checked between batches: it cannot
@@ -85,6 +86,19 @@ Radix construction appears under setup, and each query batch reuses that
 directory. Compare lookup costs for an already-prepared index and total costs
 when construction is part of your application. Short query batches may not
 amortize the setup cost.
+
+Compare the prepared alternatives against the existing baselines across regular,
+duplicate-heavy, and difficult distributions:
+
+```console
+python -m search_algos --size 100000 --datasets uniform gapped duplicates skewed adversarial --algorithms bisect dict radix neighbor_prepared dict_reverse guarded_prepared adaptive_index --queries 20000 --seed 42
+```
+
+The new names select separate strategies; the original `bisect`, `dict`,
+`radix`, and interpolation algorithms remain available unchanged. These
+alternatives combine established search and indexing techniques. Their speed
+depends on the input distribution, query mix, setup amortization, and runtime;
+they are not guaranteed to outperform a baseline.
 
 Include the full cost of multiprocessing:
 
@@ -172,6 +186,10 @@ assert find_by_sets(values, 9) is False
 | `build_first_index` | Iterable of hashable values; sorting is unnecessary | Dictionary mapping each value to its first index |
 | `find_by_dict` | Iterable of hashable values and a hashable target | First matching index, or `None`; builds an index for this call |
 | `build_radix_index` | Ascending sorted integer sequence, unchanged while the index is in use; integer targets | Reusable callable returning the first matching index, or `None` |
+| `build_neighbor_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable using one interpolation prediction, exact neighbor checks, and a bisection fallback |
+| `build_first_index_reversed` | Iterable of hashable values; sorting is unnecessary | Dictionary mapping each value to its first index, constructed by traversing backwards |
+| `build_guarded_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable rejecting out-of-range targets before full-range bisection |
+| `build_adaptive_index` | Ascending sorted integer sequence, unchanged during reuse; integer targets | Reusable callable choosing one exact lookup strategy during preparation |
 
 Sorted-input requirements are preconditions: the functions do not sort or scan
 the input to validate ordering, since that would change the cost being measured.
@@ -191,9 +209,10 @@ assert index.get(3) == 0
 assert index.get(9) is None
 ```
 
-The benchmark's `set`, `dict`, and `radix` rows measure construction separately
-from the subsequent query batch. The dictionary and radix indexes return first
-indices, matching the other index-search algorithms.
+The benchmark's `set`, `dict`, `radix`, and four prepared-alternative rows measure
+construction or preparation separately from the subsequent query batch. Every
+prepared alternative returns first indices, matching the other index-search
+algorithms.
 
 Build a radix directory once for repeated lookups on a static integer sequence:
 
@@ -227,6 +246,68 @@ well-spread integer data, but setup may dominate short batches. Skewed data or
 outliers can concentrate most values in one bucket and make radix slower than
 full-range bisection. Including it in the default benchmark does not imply a
 universal speedup guarantee.
+
+The four opt-in alternatives expose reusable lookup APIs:
+
+```python
+from search_algos import (
+    build_adaptive_index,
+    build_first_index_reversed,
+    build_guarded_index,
+    build_neighbor_index,
+)
+
+values = (-5, 1, 3, 3, 8)
+for prepare in (build_neighbor_index, build_guarded_index, build_adaptive_index):
+    lookup = prepare(values)
+    assert lookup(3) == 2
+    assert lookup(-5) == 0
+    assert lookup(4) is None
+
+index = build_first_index_reversed(iter([3, 1, 3, 2]))
+assert index.get(3) == 0
+assert index.get(9) is None
+```
+
+- **`neighbor_prepared` / `build_neighbor_index`:** caches the sequence length,
+  endpoints, and value span. Each query makes one interpolation prediction,
+  checks the predicted value and its neighbor to establish an exact first match
+  or gap, and otherwise runs `bisect_left` over the remaining valid interval.
+  Preparation and extra state are O(1); worst-case lookup is O(log n) for
+  fixed-width integers. Even spacing can make the prediction useful, while
+  irregular spacing can add overhead before the fallback.
+- **`dict_reverse` / `build_first_index_reversed`:** constructs a dictionary
+  from reversed values paired with descending positions. Repeated assignments
+  leave the earliest position for each key. Construction is expected O(n), and
+  the dictionary stores O(u) entries for `u` distinct keys. Non-sequence
+  iterables are materialized once, temporarily using O(n) extra space. This is
+  a separate API from `build_first_index`: dictionary insertion order follows
+  reverse last-occurrence order, and equal keys retain the key object from the
+  last occurrence, even though their stored index refers to the first occurrence.
+- **`guarded_prepared` / `build_guarded_index`:** caches the sequence length and
+  endpoints, rejects targets below the minimum or above the maximum, and uses
+  full-range `bisect_left` for the remaining queries. Preparation and extra
+  state are O(1); in-range lookup is O(log n). Range checks can help when many
+  queries fall outside the data but add work to in-range queries.
+- **`adaptive_index` / `build_adaptive_index`:** samples at most 16 positions
+  across the sequence, including the final position and excluding the first.
+  It counts matches between each sampled value and its immediate predecessor,
+  and measures the sampled rank error of an endpoint-based interpolation model.
+  More than half duplicate samples select the reversed dictionary; otherwise,
+  maximum rank error at most one selects the neighbor strategy, error greater
+  than one quarter of the final index selects guarded bisection, and the
+  remaining cases select the radix directory. Empty and constant sequences use
+  direct exact lookups. Preparation includes sampling and building the selected
+  index; memory and lookup costs follow that strategy.
+
+The numeric factories require sorted integer values and integer targets. They
+do not scan or copy the sequence to validate these preconditions, and the
+sequence must remain unchanged during reuse. Adaptive selection can build a
+dictionary, which does traverse the input as part of construction. Sampling
+chooses an implementation, not a correctness assumption: each selected lookup
+still verifies exact matches and preserves the first duplicate index. The fixed
+sampling rule can choose a slower strategy on unrepresentative samples; compare
+the separate alternatives when tuning a workload.
 
 Plain interpolation remains available to demonstrate distribution-sensitive
 performance. The hybrid attempts at most `len(input_list).bit_length()`
@@ -325,11 +406,14 @@ single repetition. Every measured batch is checked against expected results
 after timing, and an incorrect result aborts the run. Algorithm order rotates
 between repetitions to reduce bias from always running the same algorithm first.
 
-Set, first-index dictionary, and radix directory construction are timed
-separately on every warmup and measured repetition. Total cost combines
-per-batch preparation and lookup, making the query count relevant to how
-construction cost is amortized. Sequential lookups include the Python loop
-that executes the queries.
+Set construction and every prepared index are timed separately on every warmup
+and measured repetition. This includes cached bounds, neighbor-search state,
+reverse dictionary construction, and adaptive sampling plus the selected index
+construction. The same prepared lookup is reused throughout its batch. Total
+cost combines per-batch preparation and lookup, making the query count relevant
+to how construction cost is amortized. Small batches may be slower overall even
+when prepared lookup is faster. Sequential lookups include the Python loop that
+executes the queries.
 
 `parallel` measures cold calls including routing, process startup, serialization,
 result aggregation, and pool shutdown for each batch. It may start fewer workers
@@ -364,7 +448,7 @@ each result and encodes sample lists as JSON within cells. The schema version is
 | --- | --- |
 | `status`, `reason` | `complete`, `incomplete`, or `skipped`, plus an explanation when work was limited |
 | `repetitions_completed`, `warmups_completed` | Number of completed measured and warmup batches |
-| `setup_median_ns` | Median set/dictionary/radix-directory construction cost; zero for other algorithms |
+| `setup_median_ns` | Median per-batch set construction or index preparation cost; zero for unprepared searches |
 | `lookup_median_ns` | Median time for a complete batch of queries |
 | `total_median_ns` | Median of each repetition's setup plus lookup time |
 | `setup_iqr_ns`, `lookup_iqr_ns`, `total_iqr_ns` | Variability in each measured phase |
@@ -439,6 +523,7 @@ The implementation is split by responsibility:
 ```text
 search_algos/
     algorithms.py   Pure search functions
+    prepared.py     Separate prepared search alternatives and adaptive selection
     timing.py       Optional timing and profiling helpers
     parallel.py     Partitioning and process orchestration
     benchmarks.py   Workload generation, measurement, and validation

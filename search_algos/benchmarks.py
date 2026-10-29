@@ -1,9 +1,9 @@
 """Reproducible, bounded benchmarks with explicit timing and GC policies.
 
-Workload creation and correctness checks are outside the timers. Set/dictionary
-and radix-directory construction are measured separately. Cold parallel batches
-include the whole pool lifecycle; warm batches reuse workers and report their
-lifecycle separately.
+Workload creation and correctness checks are outside the timers. Prepared
+lookup construction is measured separately. Cold parallel batches include the
+whole pool lifecycle; warm batches reuse workers and report their lifecycle
+separately.
 """
 
 from __future__ import annotations
@@ -32,6 +32,12 @@ from .algorithms import (
 from .measurement import gc_policy
 from .metadata import collect_metadata
 from .parallel import ParallelSearchPool, effective_worker_count, parallel_search_many
+from .prepared import (
+    build_adaptive_index,
+    build_first_index_reversed,
+    build_guarded_index,
+    build_neighbor_index,
+)
 from .validation import (
     validate_integer,
     validate_number,
@@ -50,7 +56,18 @@ INDEX_ALGORITHMS: dict[str, Callable[[Sequence[int], int], int | None]] = {
     "jump": jump_search,
 }
 DEFAULT_ALGORITHMS = (*INDEX_ALGORITHMS, "set", "dict", "radix")
-ALGORITHM_NAMES = (*DEFAULT_ALGORITHMS, "parallel", "parallel_warm")
+PREPARED_ALGORITHMS: dict[str, Callable[[Sequence[int]], Callable[[int], int | None]]] = {
+    "neighbor_prepared": build_neighbor_index,
+    "guarded_prepared": build_guarded_index,
+    "adaptive_index": build_adaptive_index,
+}
+ALGORITHM_NAMES = (
+    *DEFAULT_ALGORITHMS,
+    *PREPARED_ALGORITHMS,
+    "dict_reverse",
+    "parallel",
+    "parallel_warm",
+)
 DEFAULT_DATASETS = ("uniform", "gapped", "duplicates", "skewed")
 DATASET_NAMES = (*DEFAULT_DATASETS, "adversarial")
 
@@ -200,6 +217,19 @@ def _measure_batch(
             setup_ns = perf_counter_ns() - start
             start = perf_counter_ns()
             results = [radix_lookup(target) for target in workload.targets]
+        elif algorithm == "dict_reverse":
+            start = perf_counter_ns()
+            reversed_indices = build_first_index_reversed(workload.values)
+            setup_ns = perf_counter_ns() - start
+            start = perf_counter_ns()
+            results = [reversed_indices.get(target) for target in workload.targets]
+        elif algorithm in PREPARED_ALGORITHMS:
+            prepare = PREPARED_ALGORITHMS[algorithm]
+            start = perf_counter_ns()
+            prepared_lookup = prepare(workload.values)
+            setup_ns = perf_counter_ns() - start
+            start = perf_counter_ns()
+            results = [prepared_lookup(target) for target in workload.targets]
         elif algorithm == "parallel":
             start = perf_counter_ns()
             results = parallel_search_many(

@@ -13,12 +13,16 @@ from search_algos.benchmarks import (
     DEFAULT_ALGORITHMS,
     DEFAULT_DATASETS,
     INDEX_ALGORITHMS,
+    PREPARED_ALGORITHMS,
     BenchmarkConfig,
     make_workload,
     run_benchmarks,
     verify_results,
 )
 from search_algos.comparison import compare_reports
+from search_algos.prepared import build_first_index_reversed
+
+NEW_PREPARED_NAMES = ("neighbor_prepared", "dict_reverse", "guarded_prepared", "adaptive_index")
 
 
 class WorkloadTests(unittest.TestCase):
@@ -64,6 +68,32 @@ class WorkloadTests(unittest.TestCase):
 
 
 class BenchmarkTests(unittest.TestCase):
+    def test_new_prepared_algorithms_are_opt_in_and_preserve_baselines(self):
+        defaults = (
+            "linear",
+            "binary",
+            "bisect",
+            "recursive",
+            "interpolation",
+            "interpolation_hybrid",
+            "exponential",
+            "jump",
+            "set",
+            "dict",
+            "radix",
+        )
+        self.assertEqual(DEFAULT_ALGORITHMS, defaults)
+        self.assertEqual(BenchmarkConfig().algorithms, defaults)
+        self.assertEqual(len(ALGORITHM_NAMES), 17)
+        for name in (*defaults, *NEW_PREPARED_NAMES, "parallel", "parallel_warm"):
+            with self.subTest(algorithm=name):
+                self.assertEqual(ALGORITHM_NAMES.count(name), 1)
+        for name in NEW_PREPARED_NAMES:
+            with self.subTest(algorithm=name):
+                self.assertNotIn(name, DEFAULT_ALGORITHMS)
+                self.assertNotIn(name, INDEX_ALGORITHMS)
+                self.assertEqual(BenchmarkConfig(algorithms=(name,)).algorithms, (name,))
+
     def test_radix_is_selected_by_default_and_available_once_in_all(self):
         self.assertIn("radix", ALGORITHM_NAMES)
         self.assertIn("radix", DEFAULT_ALGORITHMS)
@@ -72,21 +102,22 @@ class BenchmarkTests(unittest.TestCase):
         self.assertNotIn("radix", INDEX_ALGORITHMS)
         self.assertEqual(BenchmarkConfig(algorithms=("radix",)).algorithms, ("radix",))
 
-    def test_radix_benchmark_validates_all_distributions_and_compares(self):
+    def test_prepared_benchmarks_validate_all_distributions_and_compare(self):
+        algorithms = ("radix", *NEW_PREPARED_NAMES)
         report = run_benchmarks(
             BenchmarkConfig(
                 sizes=(0, 1, 40, 1000),
                 datasets=DATASET_NAMES,
-                algorithms=("radix",),
+                algorithms=algorithms,
                 queries=16,
                 repetitions=2,
                 warmups=1,
                 time_budget=0,
             )
         )
-        self.assertEqual(len(report["results"]), 4 * len(DATASET_NAMES))
+        self.assertEqual(len(report["results"]), 4 * len(DATASET_NAMES) * len(algorithms))
         for row in report["results"]:
-            with self.subTest(size=row["size"], dataset=row["dataset"]):
+            with self.subTest(algorithm=row["algorithm"], size=row["size"], dataset=row["dataset"]):
                 self.assertEqual(row["status"], "complete")
                 self.assertEqual(row["result_kind"], "first_index")
                 self.assertEqual(row["timing_scope"], "lookup_batch")
@@ -162,6 +193,103 @@ class BenchmarkTests(unittest.TestCase):
                         sizes=(10,),
                         datasets=("duplicates",),
                         algorithms=("radix",),
+                        queries=4,
+                        hit_rate=1,
+                        repetitions=1,
+                        warmups=0,
+                    )
+                )
+
+    def test_new_prepared_build_and_lookup_have_separate_timers_each_batch(self):
+        for algorithm in NEW_PREPARED_NAMES:
+            with self.subTest(algorithm=algorithm):
+                original = (
+                    build_first_index_reversed
+                    if algorithm == "dict_reverse"
+                    else PREPARED_ALGORITHMS[algorithm]
+                )
+                ticks = iter((0, 30, 50, 150, 200, 240, 250, 360, 400, 450, 470, 590))
+                timer_calls, builds, lookups = [], [], []
+
+                def timer():
+                    timer_calls.append(None)
+                    return next(ticks)
+
+                def prepare(values):
+                    self.assertEqual(len(timer_calls) % 4, 1)
+                    self.assertFalse(gc.isenabled())
+                    builds.append(values)
+                    prepared = original(values)
+                    search = prepared.get if algorithm == "dict_reverse" else prepared
+
+                    def lookup(target):
+                        self.assertEqual(len(timer_calls) % 4, 3)
+                        self.assertFalse(gc.isenabled())
+                        lookups.append(target)
+                        return search(target)
+
+                    if algorithm == "dict_reverse":
+
+                        class ObservedDictionary(dict):
+                            def get(self, target):
+                                return lookup(target)
+
+                        return ObservedDictionary(prepared)
+                    return lookup
+
+                def verify_after_timing(name, results, workload):
+                    self.assertEqual(len(timer_calls) % 4, 0)
+                    verify_results(name, results, workload)
+
+                replacement = (
+                    patch("search_algos.benchmarks.build_first_index_reversed", side_effect=prepare)
+                    if algorithm == "dict_reverse"
+                    else patch.dict(PREPARED_ALGORITHMS, {algorithm: prepare})
+                )
+                with (
+                    replacement,
+                    patch("search_algos.benchmarks.perf_counter_ns", side_effect=timer),
+                    patch(
+                        "search_algos.benchmarks.verify_results", side_effect=verify_after_timing
+                    ),
+                ):
+                    report = run_benchmarks(
+                        BenchmarkConfig(
+                            sizes=(10,),
+                            datasets=("duplicates",),
+                            algorithms=(algorithm,),
+                            queries=4,
+                            repetitions=2,
+                            warmups=1,
+                            time_budget=0,
+                        )
+                    )
+                row = report["results"][0]
+                self.assertEqual(len(builds), 3)
+                self.assertEqual(len(lookups), 12)
+                self.assertEqual(row["setup_samples_ns"], [40, 50])
+                self.assertEqual(row["lookup_samples_ns"], [110, 120])
+                self.assertEqual(row["total_median_ns"], 160)
+
+    def test_incorrect_new_prepared_lookups_abort_the_benchmark(self):
+        for algorithm in NEW_PREPARED_NAMES:
+            replacement = (
+                patch("search_algos.benchmarks.build_first_index_reversed", return_value={})
+                if algorithm == "dict_reverse"
+                else patch.dict(
+                    PREPARED_ALGORITHMS, {algorithm: lambda values: lambda target: None}
+                )
+            )
+            with (
+                self.subTest(algorithm=algorithm),
+                replacement,
+                self.assertRaisesRegex(RuntimeError, f"{algorithm} returned"),
+            ):
+                run_benchmarks(
+                    BenchmarkConfig(
+                        sizes=(10,),
+                        datasets=("duplicates",),
+                        algorithms=(algorithm,),
                         queries=4,
                         hit_rate=1,
                         repetitions=1,
@@ -367,7 +495,7 @@ class BenchmarkTests(unittest.TestCase):
             repetitions=3,
             time_budget=1,
         )
-        for algorithm in ("binary", "radix"):
+        for algorithm in ("binary", "radix", *NEW_PREPARED_NAMES):
             for warmups, status, repetitions in ((0, "incomplete", 1), (1, "skipped", 0)):
                 with self.subTest(algorithm=algorithm, warmups=warmups):
                     with patch("search_algos.benchmarks.perf_counter", side_effect=[0, 2]):
