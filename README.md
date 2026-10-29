@@ -70,23 +70,12 @@ def binary_search_std_lib(input_list, lookup_value):
 
 ### Interactive example
 
-[Open Search Lab](https://search-lab-bisect.dpittaluga.chatgpt.site) for the public
-bisect walkthrough, with step controls, playback, custom targets, synchronized
-Python code highlighting, and a copyable Python example. Its example library
-starts with bisect and is designed to accommodate more walkthroughs.
+[Open the bisect walkthrough](https://search-lab-bisect.dpittaluga.chatgpt.site/#/examples/bisect-left)
+in Search Lab, with step controls, playback, custom targets, synchronized Python
+code highlighting, and a copyable Python example. The public example library
+includes both bisect and radix.
 
-The [standalone HTML walkthrough](examples/bisect_left_step_through_with_call.html)
-is also available.
-Open the checked-out HTML file in a browser, or download the raw file from GitHub
-and open the saved copy. The example runs in JavaScript; it illustrates the Python
-call without executing Python in the browser. Its arrow icons use a CDN stylesheet.
-
-Choose a target, then use **Next step**, **Previous step**, and **Restart** to
-follow the bounds, midpoint, insertion position, and final lookup result. The
-display uses `print(binary_search_std_lib(...))` so missing values visibly print
-`None`, just as they do in Python.
-
-The example's sorted input is:
+Search Lab simulates the Python call in the browser. Its sorted input is:
 
 ```python
 values = [2, 5, 7, 7, 7, 11, 14, 18, 21, 25, 30, 33]
@@ -99,6 +88,59 @@ values = [2, 5, 7, 7, 7, 11, 14, 18, 21, 25, 30, 33]
 | `9` | `5` | `None` |
 | `40` | `12` | `None` |
 | `1` | `0` | `None` |
+
+## How radix search works
+
+The CLI's `radix` strategy uses `build_radix_index` to prepare a directory of
+value ranges for repeated searches on an already sorted integer sequence.
+It leaves the input in place; this is a search index, not radix sort.
+
+1. **Prepare the directory.** Divide the value range into buckets whose width
+   is a power of two. Use `bisect_left` to record each bucket's start and end
+   indices. Equal values stay in the same bucket.
+2. **Route a target.** Reject values outside the input range. Otherwise, subtract
+   the minimum value and apply a bit shift to calculate the target's bucket.
+3. **Search that bucket.** Call `bisect_left` between the stored offsets, then
+   check the boundary and equality to return the first matching index or `None`.
+
+Queries reuse the directory, so preparation and lookup have separate costs.
+Smaller search windows can help with repeated lookups, while short batches,
+skewed distributions, or outliers may make radix slower than full-range bisect.
+Keep the indexed sequence unchanged during reuse. See [Search API](#search-api)
+for the configuration, complexity, and input requirements.
+
+### Interactive example
+
+[Open the radix walkthrough](https://search-lab-bisect.dpittaluga.chatgpt.site/#/examples/radix)
+in Search Lab to step through directory preparation, target routing, and the
+bounded bisect search. Switch between **Preparation** and **Lookup**, change the
+directory bits, or try custom targets. Changing the target reuses the directory;
+changing the bit setting rebuilds it. Playback, code highlighting, and a
+copyable Python example are included, as in the bisect walkthrough.
+
+The browser simulation starts with this sequence and `bits=3` for readability;
+the package and CLI default to `bits=12`:
+
+```python
+from search_algos import build_radix_index
+
+values = [-12, -8, -8, -7, 4, 4, 5, 12, 13, 20, 23, 23]
+lookup = build_radix_index(values, bits=3)
+```
+
+At three bits, the bucket width is eight integers and the directory offsets are
+`[0, 4, 4, 7, 9, 12]`. Target `4` selects bucket 2, whose value range is `[4, 12)`
+and index window is `[4, 7)`. Target `0` selects the empty bucket 1, whose start
+and end indices are both `4`.
+
+| Target | `lookup(target)` | Case |
+| --- | --- | --- |
+| `4` | `4` | First duplicate |
+| `-8` | `1` | Negative value, first duplicate |
+| `0` | `None` | Empty bucket |
+| `6` | `None` | Missing value within a nonempty bucket |
+| `23` | `10` | Last value, first duplicate |
+| `40` | `None` | Outside the input range; no bisect call |
 
 ## Command-line options
 
