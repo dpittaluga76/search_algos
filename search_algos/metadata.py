@@ -36,6 +36,9 @@ def _source_root() -> Path | None:
 
 
 def _command(arguments: list[str], cwd: Path | None = None) -> str | None:
+    creation_flags = 0
+    if sys.platform == "win32":
+        creation_flags = subprocess.CREATE_NO_WINDOW
     try:
         completed = subprocess.run(
             arguments,
@@ -44,7 +47,7 @@ def _command(arguments: list[str], cwd: Path | None = None) -> str | None:
             text=True,
             timeout=2,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=creation_flags,
         )
     except (OSError, subprocess.TimeoutExpired, UnicodeError):
         return None

@@ -22,8 +22,10 @@ jobs:
         run: python -m ruff check .
       - name: Check formatting
         run: python -m ruff format --check .
-      - name: Type check the package
-        run: python -m mypy --package search_algos
+      - name: Type check the package for Linux and Windows
+        run: |
+          python -m mypy --platform linux --package search_algos
+          python -m mypy --platform win32 --package search_algos
       - name: Verify installed typing marker
         run: python -c "from importlib.metadata import distribution; files = distribution('search-algos').files; assert files and any(str(path) == 'search_algos/py.typed' for path in files)"
 
