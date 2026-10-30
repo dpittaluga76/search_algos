@@ -67,6 +67,7 @@ sigterm = true
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+fail_under = 95
 
 [tool.coverage.xml]
 output = "coverage.xml"

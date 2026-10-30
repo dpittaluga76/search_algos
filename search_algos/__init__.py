@@ -9,6 +9,7 @@ from .algorithms import (
     binary_search_by_recursion,
     binary_search_std_lib,
     build_first_index,
+    build_radix_index,
     exponential_search,
     find_by_dict,
     find_by_sets,
@@ -17,7 +18,15 @@ from .algorithms import (
     jump_search,
     linear_search,
 )
+from .certified import build_certified_radix_index
+from .landmark import build_landmark_index
 from .parallel import ParallelSearchPool, multiproc_test, parallel_search, parallel_search_many
+from .prepared import (
+    build_adaptive_index,
+    build_first_index_reversed,
+    build_guarded_index,
+    build_neighbor_index,
+)
 from .timing import profile_this, show_runtime_and_result
 
 __all__ = [
@@ -33,9 +42,16 @@ __all__ = [
     "profile_this",
     "show_runtime_and_result",
     "build_first_index",
+    "build_radix_index",
+    "build_certified_radix_index",
+    "build_landmark_index",
     "find_by_dict",
     "exponential_search",
     "jump_search",
     "interpolation_search_hybrid",
     "ParallelSearchPool",
+    "build_neighbor_index",
+    "build_first_index_reversed",
+    "build_guarded_index",
+    "build_adaptive_index",
 ]

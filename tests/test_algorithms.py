@@ -114,6 +114,26 @@ class SearchTests(unittest.TestCase):
                     for search in NUMERIC_SEARCHES:
                         self.assertEqual(search(values, target), expected)
 
+    def test_interpolation_mixed_numeric_span_can_round_to_zero(self):
+        # Mixed comparisons retain integer precision even when subtraction
+        # first converts the integer to a float and loses the entire span.
+        cases = (
+            [2**53 + 3, float(2**53 + 4), float(2**53 + 4)],
+            [-float(2**53 + 4), -(2**53 + 3), -(2**53 + 3)],
+            [2**60 - 7, float(2**60), float(2**60)],
+            [float(2**60), 2**60 + 7, 2**60 + 7],
+        )
+        for values in cases:
+            self.assertLess(values[0], values[-1])
+            self.assertEqual(values[-1] - values[0], 0.0)
+            targets = [*values, int(values[0]) - 1, int(values[-1]) + 1]
+            targets.extend(range(int(values[0]) + 1, int(values[-1])))
+            for target in targets:
+                expected = values.index(target) if target in values else None
+                for search in NUMERIC_SEARCHES:
+                    with self.subTest(search=search.__name__, values=values, target=target):
+                        self.assertEqual(search(values, target), expected)
+
     def test_hash_index_preserves_first_occurrence_and_accepts_iterators(self):
         values = [3, 1, 3, 2, 1]
         index = algorithms.build_first_index(iter(values))

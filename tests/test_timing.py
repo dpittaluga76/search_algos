@@ -1,5 +1,6 @@
 import contextlib
 import io
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
@@ -63,6 +64,31 @@ class TimingTests(unittest.TestCase):
                 profile_this(fail)()
         profiler.disable.assert_called_once_with()
         profiler.print_stats.assert_called_once_with()
+
+    def test_profiler_preserves_existing_hook_on_success_and_failure(self):
+        previous = sys.getprofile()
+        calls = []
+
+        def existing(frame, event, argument):
+            if event == "call":
+                calls.append(frame.f_code.co_name)
+
+        def fail():
+            raise RuntimeError("expected failure")
+
+        try:
+            sys.setprofile(existing)
+            with patch("search_algos.timing.cProfile.Profile") as create_profiler:
+                self.assertEqual(profile_this(linear_search)([7], 7), 0)
+                self.assertIs(sys.getprofile(), existing)
+                with self.assertRaisesRegex(RuntimeError, "expected failure"):
+                    profile_this(fail)()
+                self.assertIs(sys.getprofile(), existing)
+                create_profiler.assert_not_called()
+        finally:
+            sys.setprofile(previous)
+        self.assertIn("linear_search", calls)
+        self.assertIn("fail", calls)
 
 
 if __name__ == "__main__":

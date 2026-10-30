@@ -20,12 +20,18 @@ def _project_version(root: Path) -> str | None:
         document = (root / "pyproject.toml").read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
-    project = re.search(r"(?ms)^\[project\]\s*\n(.*?)(?=^\[|\Z)", document)
+    project = re.search(
+        r"(?ms)^[ \t]*\[project\][ \t]*(?:#[^\r\n]*)?\n(.*?)(?=^[ \t]*\[|\Z)", document
+    )
     if project is None:
         return None
-    if not re.search(r"(?m)^name\s*=\s*['\"]search-algos['\"]\s*$", project[1]):
+    if not re.search(
+        r"(?m)^[ \t]*name\s*=\s*['\"]search-algos['\"][ \t]*(?:#[^\r\n]*)?$", project[1]
+    ):
         return None
-    version = re.search(r"(?m)^version\s*=\s*['\"]([^'\"]+)['\"]\s*$", project[1])
+    version = re.search(
+        r"(?m)^[ \t]*version\s*=\s*['\"]([^'\"]+)['\"][ \t]*(?:#[^\r\n]*)?$", project[1]
+    )
     return version[1] if version else None
 
 
@@ -36,6 +42,9 @@ def _source_root() -> Path | None:
 
 
 def _command(arguments: list[str], cwd: Path | None = None) -> str | None:
+    creation_flags = 0
+    if sys.platform == "win32":
+        creation_flags = subprocess.CREATE_NO_WINDOW
     try:
         completed = subprocess.run(
             arguments,
@@ -44,7 +53,7 @@ def _command(arguments: list[str], cwd: Path | None = None) -> str | None:
             text=True,
             timeout=2,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=creation_flags,
         )
     except (OSError, subprocess.TimeoutExpired, UnicodeError):
         return None

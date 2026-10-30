@@ -26,6 +26,7 @@ class _Row:
     setup: list[float]
     lookup: list[float]
     gc_mode: str | None
+    queries: int | None
 
     @property
     def scenario(self) -> Scenario:
@@ -57,6 +58,69 @@ def _samples(value: Any, label: str) -> list[float]:
     return result
 
 
+def _count(
+    data: dict[str, Any], field: str, label: str, *, minimum: int = 0, required: bool = False
+) -> int | None:
+    if field not in data and not required:
+        return None
+    value = data.get(field)
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{label} {field} must be an integer >= {minimum}")
+    return value
+
+
+def _validate_progress(
+    data: dict[str, Any],
+    config_counts: dict[str, int | None],
+    sample_count: int,
+    status: str,
+    version: int,
+    label: str,
+) -> None:
+    """Check completion evidence, allowing absent fields only in legacy rows."""
+    requested = {}
+    for field, minimum in (("queries", 1), ("repetitions", 1), ("warmups", 0)):
+        value = _count(data, field, label, minimum=minimum, required=version == 2)
+        configured = config_counts[field]
+        if value is not None and configured is not None and value != configured:
+            raise ValueError(f"{label} {field} conflicts with config: {value} versus {configured}")
+        requested[field] = value if value is not None else configured
+    completed = {
+        field: _count(data, field, label, required=version == 2)
+        for field in ("repetitions_completed", "warmups_completed", "completed_queries")
+    }
+    if completed["repetitions_completed"] not in (None, sample_count):
+        raise ValueError(
+            f"{label} repetitions_completed must equal timing sample count {sample_count}"
+        )
+    queries = requested["queries"]
+    if queries is not None and completed["completed_queries"] not in (None, sample_count * queries):
+        raise ValueError(
+            f"{label} completed_queries must equal timing sample count * queries "
+            f"({sample_count * queries})"
+        )
+    repetitions = requested["repetitions"]
+    if repetitions is not None:
+        if sample_count > repetitions:
+            raise ValueError(
+                f"{label} timing sample count exceeds requested repetitions {repetitions}"
+            )
+        if status == "complete" and sample_count != repetitions:
+            raise ValueError(
+                f"{label} is complete but timing sample count differs from repetitions"
+            )
+        if status == "incomplete" and sample_count == repetitions:
+            raise ValueError(f"{label} is incomplete but all requested repetitions are present")
+    if status == "incomplete" and sample_count == 0:
+        raise ValueError(f"{label} is incomplete but has no timing samples; use skipped")
+    warmups, warmups_completed = requested["warmups"], completed["warmups_completed"]
+    if warmups is not None and warmups_completed is not None:
+        if warmups_completed > warmups:
+            raise ValueError(f"{label} warmups_completed exceeds requested warmups {warmups}")
+        if sample_count and warmups_completed != warmups:
+            raise ValueError(f"{label} contains timing samples before all warmups were completed")
+
+
 def _validate_report(
     report: dict[str, Any], label: str
 ) -> tuple[dict[str, Any], dict[RowKey, _Row]]:
@@ -69,6 +133,13 @@ def _validate_report(
     config = report.get("config", {})
     if not isinstance(metadata, dict) or not isinstance(config, dict):
         raise ValueError(f"{label} metadata and config must be JSON objects")
+    config_counts = {
+        field: _count(config, field, f"{label} config", minimum=minimum)
+        for field, minimum in (("queries", 1), ("repetitions", 1), ("warmups", 0))
+    }
+    configured_gc = config.get("gc_mode")
+    if configured_gc not in (None, "enabled", "disabled"):
+        raise ValueError(f"{label} config gc_mode must be enabled or disabled when specified")
     results = report.get("results")
     if not isinstance(results, list):
         raise ValueError(f"{label} results must be a list")
@@ -84,7 +155,7 @@ def _validate_report(
         status = data.get("status", "complete" if version == 1 else None)
         if status not in ("complete", "incomplete", "skipped"):
             raise ValueError(f"{row_label} needs status complete, incomplete, or skipped")
-        for field in ("size", "queries", "effective_workers"):
+        for field in ("size", "effective_workers"):
             if field in data and (type(data[field]) is not int or data[field] < 0):
                 raise ValueError(f"{row_label} {field} must be a nonnegative integer")
         if "dataset" in data and not isinstance(data["dataset"], str):
@@ -101,15 +172,28 @@ def _validate_report(
             raise ValueError(f"{row_label} is complete but has no timing samples")
         if status == "skipped" and lookup:
             raise ValueError(f"{row_label} is skipped but contains timing samples")
+        _validate_progress(data, config_counts, len(lookup), status, version, row_label)
         gc_mode = data.get("gc_mode", config.get("gc_mode"))
         if gc_mode not in (None, "enabled", "disabled"):
             raise ValueError(f"{row_label} gc_mode must be enabled or disabled when specified")
-        rows[key] = _Row(data, identity, status, setup, lookup, gc_mode)
+        if gc_mode is not None and configured_gc is not None and gc_mode != configured_gc:
+            raise ValueError(f"{row_label} gc_mode conflicts with config")
+        queries = _count(data, "queries", row_label, minimum=1)
+        if queries is None:
+            queries = config_counts["queries"]
+        rows[key] = _Row(data, identity, status, setup, lookup, gc_mode, queries)
     return metadata, rows
 
 
 def _reject_constant(value: str) -> Any:
     raise ValueError(f"nonfinite JSON number {value} is not supported")
+
+
+def _finite_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("JSON number exceeds finite floating-point range")
+    return result
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -122,13 +206,22 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def load_report(path: Path) -> dict[str, Any]:
-    """Read and validate a schema-1 or schema-2 JSON benchmark report."""
+    """Read a report, requiring consistent completion evidence for schema 2.
+
+    Legacy schema-1 progress fields remain optional, but any supplied counts
+    must agree with raw samples and requested work.
+    """
     try:
         report = json.loads(
             path.read_text(encoding="utf-8"),
             parse_constant=_reject_constant,
+            parse_float=_finite_float,
             object_pairs_hook=_unique_object,
         )
+    except RecursionError as error:
+        raise ValueError(
+            f"Cannot read benchmark report {path}: JSON nesting is too deep"
+        ) from error
     except (OSError, UnicodeError, ValueError) as error:
         raise ValueError(f"Cannot read benchmark report {path}: {error}") from error
     if not isinstance(report, dict):
@@ -146,13 +239,21 @@ def _summary(row: _Row | None, metric: str) -> tuple[float | None, float | None,
     samples = sorted(samples)
     lower_middle = samples[(len(samples) - 1) // 2]
     upper_middle = samples[len(samples) // 2]
-    median = lower_middle + (upper_middle - lower_middle) / 2
+    middle_sum = lower_middle + upper_middle
+    median = (
+        middle_sum / 2
+        if math.isfinite(middle_sum)
+        else lower_middle + (upper_middle - lower_middle) / 2
+    )
     if len(samples) < 2:
         return median, None, None
 
     def quartile(numerator: int) -> float:
         index, remainder = divmod((len(samples) - 1) * numerator, 4)
         lower, upper = samples[index], samples[min(index + 1, len(samples) - 1)]
+        weighted_sum = lower * (4 - remainder) + upper * remainder
+        if math.isfinite(weighted_sum):
+            return weighted_sum / 4
         return lower + (upper - lower) * (remainder / 4)
 
     return median, quartile(1), quartile(3)
@@ -249,7 +350,10 @@ def compare_reports(
         conflicting_dimensions = []
         if before is not None and after is not None:
             for dimension in ("size", "queries"):
-                previous, current = before.data.get(dimension), after.data.get(dimension)
+                if dimension == "queries":
+                    previous, current = before.queries, after.queries
+                else:
+                    previous, current = before.data.get(dimension), after.data.get(dimension)
                 if previous is not None and current is not None and previous != current:
                     conflicting_dimensions.append(
                         f"{dimension} differs: {previous} versus {current}"

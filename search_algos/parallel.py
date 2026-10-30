@@ -7,6 +7,9 @@ including when supplying an unsorted sequence and a suitable custom search.
 
 Reusable pools retain workers, not preloaded input: each submitted task still
 serializes its chunk and assigned targets. Do not mutate input during pool use.
+Common standard sequence containers keep their native slices; other sequences
+transfer indexed chunks as plain lists, supporting deque and memoryview inputs.
+Transferred elements and targets must be pickleable.
 Custom searches must be importable, pickleable functions returning the first
 matching local index, or ``None``.
 """
@@ -16,6 +19,7 @@ from __future__ import annotations
 import gc
 import os
 import sys
+from array import array
 from bisect import bisect_left
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -117,8 +121,10 @@ class ParallelSearchPool:
     """Reuse fully initialized workers across batches over one fixed sequence.
 
     Entering the context eagerly starts all ``worker_count`` workers. An empty
-    sequence needs no workers. Startup readiness is bounded by 30 seconds, and
-    worker exceptions or abrupt exits propagate after pool cleanup. Startup and
+    sequence needs no workers. The startup readiness wait and initializer
+    barrier each use a 30-second timeout; joining workers during cleanup can
+    extend the total elapsed time. Running tasks are not forcibly terminated.
+    Worker exceptions or abrupt exits propagate after pool cleanup. Startup and
     shutdown are separate from ``search_many`` so benchmarks can report them
     separately from steady-state batches. Each batch still transfers its data.
 
@@ -229,7 +235,7 @@ class ParallelSearchPool:
             futures = [
                 executor.submit(
                     _search_chunk,
-                    self._values[start:stop],
+                    self._chunk_values(start, stop),
                     indexed,
                     start,
                     self._search_func,
@@ -246,6 +252,15 @@ class ParallelSearchPool:
             self.close()
             raise
         return results
+
+    def _chunk_values(self, start: int, stop: int) -> Sequence[Any]:
+        # Preserve the native slicing/serialization path for ordinary inputs.
+        # A general Sequence need not support slices (deque), and a slice's
+        # container need not be pickleable (memoryview). Transfer its indexed
+        # values instead, requiring only elements to cross the spawn boundary.
+        if type(self._values) in (list, tuple, range, str, bytes, bytearray, array):
+            return self._values[start:stop]
+        return [self._values[index] for index in range(start, stop)]
 
     def search_many(self, lookup_values: Iterable[Any]) -> list[int | None]:
         """Search one batch using this context's existing workers."""

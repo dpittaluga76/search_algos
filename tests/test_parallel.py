@@ -8,6 +8,9 @@ import os
 import subprocess
 import sys
 import unittest
+from array import array
+from collections import deque
+from collections.abc import Sequence
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from unittest.mock import patch
@@ -70,6 +73,19 @@ def require_enabled_gc(values, target):
     if not gc.isenabled():
         raise RuntimeError("worker GC was disabled")
     return binary_search(values, target)
+
+
+class IndexOnlySequence(Sequence):
+    def __init__(self, values):
+        self.values = values
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            raise TypeError("this sequence supports integer indices only")
+        return self.values[index]
 
 
 def verify_abrupt_failure():
@@ -173,6 +189,27 @@ class PartitionTests(unittest.TestCase):
 
 
 class ParallelSearchTests(unittest.TestCase):
+    def test_non_sliceable_and_non_pickleable_sequence_containers(self):
+        for values in (
+            deque([1, 2, 2, 2, 2, 3]),
+            memoryview(array("i", [1, 2, 2, 2, 2, 3])),
+            IndexOnlySequence([1, 2, 2, 2, 2, 3]),
+        ):
+            with self.subTest(container=type(values).__name__):
+                self.assertEqual(parallel_search_many(values, [3, 2, 0, 4], 2), [5, 1, None, None])
+
+    def test_generic_container_broadcast_preserves_first_match(self):
+        self.assertEqual(
+            parallel_search_many(
+                deque([9, 1, 4, 2, 9, 3]),
+                [9, 3, 1, 7],
+                2,
+                linear_search,
+                route_targets=False,
+            ),
+            [0, 5, 1, None],
+        )
+
     def test_remainder_and_missing_targets(self):
         self.assertEqual(
             parallel_search_many(list(range(1, 11)), [10, 7, 1, 0, 11], 4),
@@ -268,6 +305,13 @@ class ParallelSearchTests(unittest.TestCase):
 
 
 class ReusedPoolTests(unittest.TestCase):
+    def test_generic_sequence_container_reuses_workers(self):
+        before = {child.pid for child in multiprocessing.active_children()}
+        with ParallelSearchPool(deque([1, 2, 2, 2, 2, 3]), 2) as pool:
+            self.assertEqual(pool.search_many([2, 3, 0]), [1, 5, None])
+            self.assertEqual(pool.search_many([1, 2, 4]), [0, 1, None])
+        self.assertEqual({child.pid for child in multiprocessing.active_children()}, before)
+
     def test_pool_starts_all_workers_and_reuses_them_across_batches(self):
         before = {child.pid for child in multiprocessing.active_children()}
         with ParallelSearchPool([1, 2, 2, 3, 4, 5], 2) as pool:
