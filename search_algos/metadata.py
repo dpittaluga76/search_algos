@@ -20,12 +20,18 @@ def _project_version(root: Path) -> str | None:
         document = (root / "pyproject.toml").read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
-    project = re.search(r"(?ms)^\[project\]\s*\n(.*?)(?=^\[|\Z)", document)
+    project = re.search(
+        r"(?ms)^[ \t]*\[project\][ \t]*(?:#[^\r\n]*)?\n(.*?)(?=^[ \t]*\[|\Z)", document
+    )
     if project is None:
         return None
-    if not re.search(r"(?m)^name\s*=\s*['\"]search-algos['\"]\s*$", project[1]):
+    if not re.search(
+        r"(?m)^[ \t]*name\s*=\s*['\"]search-algos['\"][ \t]*(?:#[^\r\n]*)?$", project[1]
+    ):
         return None
-    version = re.search(r"(?m)^version\s*=\s*['\"]([^'\"]+)['\"]\s*$", project[1])
+    version = re.search(
+        r"(?m)^[ \t]*version\s*=\s*['\"]([^'\"]+)['\"][ \t]*(?:#[^\r\n]*)?$", project[1]
+    )
     return version[1] if version else None
 
 

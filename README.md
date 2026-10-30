@@ -723,6 +723,8 @@ Runtime metadata includes the Python implementation/version, platform, CPU model
 package version, Git commit, and dirty-checkout status. Unavailable fields are
 null. Git provenance comes from the executing source checkout; an installed
 package does not borrow the Git revision of the caller's working directory.
+Source-checkout version detection supports inline comments and indentation in
+the static `[project]` metadata, so those formatting choices preserve provenance.
 Warmups and repeated measurements reduce some noise, but CPU load, scheduling,
 caching, and machine differences
 still affect results. Each repetition reuses the same workload.
