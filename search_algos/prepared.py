@@ -31,9 +31,9 @@ def build_neighbor_index(input_list: Sequence[int]) -> Callable[[int], int | Non
     >>> lookup(3)
     >>> build_neighbor_index([])(2)
     """
-    if not input_list:
-        return lambda target: None
     size = len(input_list)
+    if size == 0:
+        return lambda target: None
     lower, upper = input_list[0], input_list[-1]
     span, last = upper - lower, size - 1
     if span == 0:
@@ -113,9 +113,10 @@ def build_guarded_index(input_list: Sequence[int]) -> Callable[[int], int | None
     1
     >>> lookup(9)
     """
-    if not input_list:
+    size = len(input_list)
+    if size == 0:
         return lambda target: None
-    size, lower, upper = len(input_list), input_list[0], input_list[-1]
+    lower, upper = input_list[0], input_list[-1]
 
     def lookup(target: int) -> int | None:
         if target < lower or target > upper:
@@ -152,7 +153,7 @@ def build_adaptive_index(input_list: Sequence[int]) -> Callable[[int], int | Non
     >>> lookup(3)
     """
     size = len(input_list)
-    if not input_list:
+    if size == 0:
         return lambda target: None
     lower, upper = input_list[0], input_list[-1]
     span, last = upper - lower, size - 1

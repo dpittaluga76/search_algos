@@ -321,6 +321,8 @@ or perform a separate ordering-validation pass. For nonconstant input,
 `build_certified_radix_index` scans the values to verify the local properties
 needed by its shortcuts; this preparation is included in its setup measurement.
 This scan does not validate the sorted-integer input contract.
+Numeric prepared builders determine emptiness from `len(values)`; a custom
+sequence's Boolean conversion is not required and does not determine its size.
 For custom objects, ordering must agree with equality: objects that tie under
 sorting must compare equal with `==`. For records sorted by only one field,
 search a corresponding sequence of keys, or use `linear_search` when matching

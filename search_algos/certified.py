@@ -88,10 +88,10 @@ def build_certified_radix_index(
     """
     if type(bits) is not int or not 0 <= bits <= 12:
         raise ValueError("bits must be an integer between 0 and 12")
-    if not input_list:
+    size = len(input_list)
+    if size == 0:
         return lambda target: None
 
-    size = len(input_list)
     lower, upper = input_list[0], input_list[-1]
     if lower == upper:
         return lambda target: 0 if target == lower else None

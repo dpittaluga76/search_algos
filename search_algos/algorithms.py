@@ -296,7 +296,7 @@ def build_radix_index(input_list: Sequence[int], *, bits: int = 12) -> Callable[
     """
     if type(bits) is not int or not 0 <= bits <= 12:
         raise ValueError("bits must be an integer between 0 and 12")
-    if not input_list:
+    if len(input_list) == 0:
         return lambda target: None
 
     lower, upper = input_list[0], input_list[-1]

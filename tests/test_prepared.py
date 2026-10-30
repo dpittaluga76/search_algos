@@ -12,13 +12,35 @@ from unittest.mock import patch
 
 from search_algos import (
     build_adaptive_index,
+    build_certified_radix_index,
     build_first_index_reversed,
     build_guarded_index,
+    build_landmark_index,
     build_neighbor_index,
+    build_radix_index,
     prepared,
 )
 
 NUMERIC_BUILDERS = (build_neighbor_index, build_guarded_index, build_adaptive_index)
+
+
+class CustomTruthSequence(Sequence):
+    """Sequence truth is independent from its length and integer contents."""
+
+    def __init__(self, values, truth):
+        self.values = values
+        self.truth = truth
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        return self.values[index]
+
+    def __bool__(self):
+        if self.truth is None:
+            raise AssertionError("search must check length instead of truth value")
+        return self.truth
 
 
 class CountedSequence(Sequence):
@@ -61,6 +83,23 @@ class EqualKey:
 
 
 class PreparedSearchTests(unittest.TestCase):
+    def test_numeric_builders_use_sequence_length_for_empty_detection(self):
+        builders = (
+            *NUMERIC_BUILDERS,
+            build_radix_index,
+            build_certified_radix_index,
+            build_landmark_index,
+        )
+        for data in ((), (-3, -3), (-4, 0, 0, 8)):
+            for truth in (False, True, None):
+                values = CustomTruthSequence(data, truth)
+                for builder in builders:
+                    lookup = builder(values)
+                    for target in range(-5, 10):
+                        expected = data.index(target) if target in data else None
+                        with self.subTest(builder=builder, data=data, truth=truth, target=target):
+                            self.assertEqual(lookup(target), expected)
+
     def test_small_sorted_multisets_match_first_indices(self):
         for size in range(8):
             for values in itertools.combinations_with_replacement(range(-2, 4), size):
