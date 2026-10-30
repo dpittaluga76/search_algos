@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+from .console import Cell, Console, status_style
+from .naming import algorithm_label, format_algorithm
+
 Identity = tuple[str, str, str, str]
 Scenario = tuple[str | None, int | None]
 RowKey = tuple[Identity, Scenario]
@@ -331,6 +334,7 @@ def compare_reports(
         after_median, after_q1, after_q3 = _summary(after, metric)
         row: dict[str, Any] = {
             **dict(zip(IDENTITY_FIELDS, source.identity)),
+            "algorithm_label": algorithm_label(source.data["algorithm"]),
             "size": source.data.get("size"),
             "dataset": source.data.get("dataset"),
             "baseline_status": before.status if before else None,
@@ -425,7 +429,9 @@ def compare_reports(
     }
 
 
-def render_comparison(report: dict[str, Any], format: str = "text") -> str:
+def render_comparison(
+    report: dict[str, Any], format: str = "text", *, color: bool = False, width: int | None = None
+) -> str:
     """Render comparison output as a readable table, JSON, or flat CSV."""
     if format == "json":
         return json.dumps(report, indent=2, allow_nan=False) + "\n"
@@ -434,6 +440,7 @@ def render_comparison(report: dict[str, Any], format: str = "text") -> str:
         fieldnames = [
             "metric",
             *IDENTITY_FIELDS,
+            "algorithm_label",
             "size",
             "dataset",
             "baseline_status",
@@ -466,18 +473,20 @@ def render_comparison(report: dict[str, Any], format: str = "text") -> str:
     if format != "text":
         raise ValueError("comparison format must be text, json, or csv")
 
-    lines = [
-        f"Comparison metric: {report['metric']} (median milliseconds)",
-        f"Speedup: {report['ratio_definition']}.",
-        f"IQR overlap: {report['iqr_interpretation']}.",
-    ]
-    lines.extend(f"Warning: {warning}" for warning in report["warnings"])
+    console = Console(color=color, width=width)
+    lines = console.title("COMPARISON")
     lines.extend(
-        [
-            "",
-            f"{'algorithm':<22} {'workload':<20} {'baseline ms':>12} {'candidate ms':>12} {'speedup':>10} {'IQR overlap':>12} {'status':<18}",
-        ]
+        console.paragraph(f"Comparison metric: {report['metric']} (median milliseconds)", "strong")
     )
+    lines.extend(
+        console.paragraph(
+            "Speedup > 1x: faster candidate | < 1x: slower candidate | 1x: unchanged", "muted"
+        )
+    )
+    for warning in report["warnings"]:
+        lines.extend(console.paragraph(f"Warning: {warning}", "warning"))
+    lines.append("")
+    table = []
     for row in report["comparisons"]:
         before = (
             "n/a" if row["baseline_median_ns"] is None else f"{row['baseline_median_ns'] / 1e6:.6f}"
@@ -490,13 +499,45 @@ def render_comparison(report: dict[str, Any], format: str = "text") -> str:
         speedup = "n/a" if row["speedup"] is None else f"{row['speedup']:.2f}x"
         overlap = "n/a" if row["iqr_overlap"] is None else ("yes" if row["iqr_overlap"] else "no")
         workload = f"{row['dataset'] or '?'}/{row['size'] if row['size'] is not None else '?'}"
-        lines.append(
-            f"{row['algorithm']:<22} {workload:<20} {before:>12} {after:>12} "
-            f"{speedup:>10} {overlap:>12} {row['status']:<18}"
+        speed_style = "muted"
+        if row["speedup"] is not None and row["speedup"] != 1:
+            speed_style = "success" if row["speedup"] > 1 else "error"
+        table.append(
+            [
+                Cell(format_algorithm(row["algorithm"])),
+                Cell(workload, "muted"),
+                Cell(before),
+                Cell(after, "strong"),
+                Cell(speedup, speed_style),
+                Cell(overlap, "muted"),
+                Cell(row["status"], status_style(row["status"])),
+            ]
         )
+    lines.extend(
+        console.table(
+            (
+                "algorithm [identifier]",
+                "workload",
+                "baseline ms",
+                "candidate ms",
+                "speedup",
+                "IQR overlap",
+                "status",
+            ),
+            table,
+            right=(2, 3, 4, 5),
+        )
+    )
+    for row in report["comparisons"]:
+        context = f"{format_algorithm(row['algorithm'])} ({row['dataset'] or '?'}/{row['size'] if row['size'] is not None else '?'})"
         if row["reason"]:
-            lines.append(f"  {row['reason']}")
-        lines.extend(f"  Warning: {warning}" for warning in row["warnings"])
+            lines.extend(console.paragraph(f"{context}: {row['reason']}", "warning", indent=2))
+        for warning in row["warnings"]:
+            lines.extend(console.paragraph(f"Warning: {context}: {warning}", "warning", indent=2))
     if not report["comparisons"]:
-        lines.append("No result rows.")
+        lines.extend(console.paragraph("No result rows.", "muted"))
+    lines.extend(["", console.rule()])
+    lines.extend(console.paragraph("READING THE COMPARISON", "strong"))
+    lines.extend(console.paragraph(f"Speedup: {report['ratio_definition']}.", "muted"))
+    lines.extend(console.paragraph(f"IQR overlap: {report['iqr_interpretation']}.", "muted"))
     return "\n".join(lines) + "\n"

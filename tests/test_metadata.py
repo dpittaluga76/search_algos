@@ -1,6 +1,7 @@
 """Metadata must describe the executing package, not its caller's checkout."""
 
 import importlib.metadata
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -100,6 +101,65 @@ class MetadataTests(unittest.TestCase):
                             all(call.args[1] == root for call in command.call_args_list)
                         )
 
+    @unittest.skipUnless(shutil.which("git"), "Git is required for the provenance regression")
+    def test_non_ascii_checkout_records_provenance_with_legacy_default_encoding(self):
+        run = subprocess.run
+
+        def legacy_encoding_run(*args, **kwargs):
+            # Exercise real Git output while simulating a Windows cp1252
+            # default on every CI platform. An explicit encoding wins.
+            kwargs.setdefault("encoding", "cp1252")
+            return run(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo-\u00e9"
+            root.mkdir()
+            hooks = Path(directory) / "empty-hooks"
+            hooks.mkdir()
+            project = root / "pyproject.toml"
+            project.write_text(
+                '[project]\nname = "search-algos"\nversion = "0.3.0"\n', encoding="utf-8"
+            )
+            git = [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=Metadata regression",
+                "-c",
+                "user.email=regression@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                f"core.hooksPath={hooks}",
+            ]
+            for arguments in (
+                ["init", "--quiet"],
+                ["add", "--force", "pyproject.toml"],
+                ["commit", "--quiet", "-m", "Provenance fixture"],
+            ):
+                run(git + arguments, check=True, capture_output=True, timeout=10)
+            revision = run(
+                git + ["rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                encoding="utf-8",
+                timeout=10,
+            ).stdout.strip()
+            with (
+                patch.object(metadata.subprocess, "run", side_effect=legacy_encoding_run),
+                patch.object(metadata, "__file__", str(root / "search_algos" / "metadata.py")),
+                patch.object(metadata, "_cpu_model", return_value=None),
+            ):
+                clean = metadata.collect_metadata()
+                self.assertEqual(clean["git_commit"], revision)
+                self.assertIs(clean["git_dirty"], False)
+                with project.open("a", encoding="utf-8") as output:
+                    output.write("# dirty checkout\n")
+                dirty = metadata.collect_metadata()
+                self.assertEqual(dirty["git_commit"], revision)
+                self.assertIs(dirty["git_dirty"], True)
+
     def test_git_unavailable_or_wrong_repository_is_unknown(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -110,7 +170,11 @@ class MetadataTests(unittest.TestCase):
                         self.assertEqual(metadata._git_metadata(root), (None, None))
 
     def test_commands_handle_missing_tools_failure_and_timeouts(self):
-        for error in (FileNotFoundError(), subprocess.TimeoutExpired("git", 2)):
+        for error in (
+            FileNotFoundError(),
+            subprocess.TimeoutExpired("git", 2),
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+        ):
             with patch.object(metadata.subprocess, "run", side_effect=error):
                 self.assertIsNone(metadata._command(["git", "--version"]))
         with patch.object(

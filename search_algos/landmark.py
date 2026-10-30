@@ -1,4 +1,4 @@
-"""Exact stride, duplicate-run, and radix landmarks behind a separate index.
+"""Adaptive stride/run/radix lookup, a project hybrid named landmark_index.
 
 This experimental hybrid preserves every existing algorithm. Sorted integer
 input, integer targets, and unchanged input during reuse are preconditions.
@@ -73,7 +73,10 @@ def _run_lookup(values: Sequence[int]) -> Callable[[int], int | None] | None:
 
 
 def build_landmark_index(values: Sequence[int]) -> Callable[[int], int | None]:
-    """Prepare an exact first-index lookup using three kinds of landmarks.
+    """Adaptive stride/run/radix lookup hybrid returning exact first indices.
+
+    Landmark is this project's identifier for the combination, rather than a
+    canonical name claimed for an algorithm in the literature.
 
     Input must be sorted ascending, integer-valued, and unchanged during reuse;
     targets must be integers. These preconditions are not validated by a scan.

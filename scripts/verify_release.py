@@ -121,7 +121,8 @@ def main() -> int:
             "pyproject.toml",
             "search_algos.py",
             "search_algos/py.typed",
-            "scripts/verify_release.py",
+            "docs/algorithm-names.md",
+            *(path.relative_to(source).as_posix() for path in (source / "scripts").rglob("*.py")),
             *(path.relative_to(source).as_posix() for path in (source / "tests").rglob("*.py")),
         }
         archive_files = _source_archive_files(sdists[0], required)

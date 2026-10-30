@@ -1,3 +1,4 @@
 include search_algos.py
-include scripts/verify_release.py
+include docs/algorithm-names.md
+recursive-include scripts *.py
 recursive-include tests *.py

@@ -75,6 +75,24 @@ def require_enabled_gc(values, target):
     return binary_search(values, target)
 
 
+class DivergentInequalityKey:
+    """Pickleable ordered values whose inequality differs from equality."""
+
+    def __init__(self, value):
+        self.value = value
+
+    def __lt__(self, other):
+        return self.value < other.value
+
+    def __eq__(self, other):
+        if not isinstance(other, DivergentInequalityKey):
+            return NotImplemented
+        return self.value == other.value
+
+    def __ne__(self, other):
+        return True
+
+
 class IndexOnlySequence(Sequence):
     def __init__(self, values):
         self.values = values
@@ -189,6 +207,25 @@ class PartitionTests(unittest.TestCase):
 
 
 class ParallelSearchTests(unittest.TestCase):
+    def test_parallel_modes_validate_matching_values_with_equality(self):
+        values = [DivergentInequalityKey(value) for value in (1, 2, 2, 3, 4, 4)]
+        targets = [DivergentInequalityKey(value) for value in (2, 4, 9, 0)]
+        expected = [binary_search(values, target) for target in targets]
+        self.assertEqual(expected, [1, 4, None, None])
+        with self.subTest(mode="cold"):
+            self.assertEqual(parallel_search_many(values, targets, workers=2), expected)
+        with self.subTest(mode="reused"):
+            with ParallelSearchPool(values, workers=2) as pool:
+                self.assertEqual(pool.search_many(targets), expected)
+                self.assertEqual(
+                    pool.search_many(list(reversed(targets))), list(reversed(expected))
+                )
+
+    def test_divergent_inequality_does_not_allow_a_wrong_value_result(self):
+        values = [DivergentInequalityKey(value) for value in (1, 2, 2, 3, 4, 4)]
+        with self.assertRaisesRegex(ValueError, "matching index"):
+            parallel_search(values, DivergentInequalityKey(4), 2, wrong_value_search)
+
     def test_non_sliceable_and_non_pickleable_sequence_containers(self):
         for values in (
             deque([1, 2, 2, 2, 2, 3]),

@@ -1,4 +1,4 @@
-"""Additional prepared search strategies that leave the original baselines intact.
+"""Project hybrids and prepared variants of established lookup techniques.
 
 The numeric factories borrow ascending integer sequences. Integer targets and
 unchanged input during lookup are preconditions; no full validation scan or
@@ -16,7 +16,10 @@ H = TypeVar("H", bound=Hashable)
 
 
 def build_neighbor_index(input_list: Sequence[int]) -> Callable[[int], int | None]:
-    """Cache endpoints for one interpolation probe followed by exact search.
+    """Prepared interpolation prediction, neighbor checks, and binary fallback.
+
+    This is a project hybrid of established techniques, not a nearest-neighbor
+    retrieval algorithm; it answers exact first-index queries.
 
     Input must remain sorted, integer-valued, and unchanged during use. Setup
     needs constant sequence accesses and storage. A probe and adjacent checks
@@ -47,7 +50,7 @@ def build_neighbor_index(input_list: Sequence[int]) -> Callable[[int], int | Non
         position = (target - lower) * last // span
         value = input_list[position]
         if value == target:
-            if position == 0 or input_list[position - 1] != target:
+            if position == 0 or not input_list[position - 1] == target:
                 return position
             return bisect_left(input_list, target, 0, position)
         if value < target:
@@ -68,7 +71,7 @@ def build_neighbor_index(input_list: Sequence[int]) -> Callable[[int], int | Non
             if previous_value < target:
                 return None
             if previous_value == target:
-                if neighbor == 0 or input_list[neighbor - 1] != target:
+                if neighbor == 0 or not input_list[neighbor - 1] == target:
                     return neighbor
                 return bisect_left(input_list, target, 0, neighbor)
             left, right = 0, neighbor
@@ -79,7 +82,7 @@ def build_neighbor_index(input_list: Sequence[int]) -> Callable[[int], int | Non
 
 
 def build_first_index_reversed(input_list: Iterable[H]) -> dict[H, int]:
-    """Build first indices by overwriting entries during reverse traversal.
+    """Build a first-occurrence hash index using reverse-traversal overwrites.
 
     Values must be hashable; sorting is unnecessary. A sequence is traversed
     without copying. Other iterables are first materialized as a tuple, needing
@@ -102,7 +105,7 @@ def build_first_index_reversed(input_list: Iterable[H]) -> dict[H, int]:
 
 
 def build_guarded_index(input_list: Sequence[int]) -> Callable[[int], int | None]:
-    """Cache endpoints, reject outside targets, then use ordinary ``bisect``.
+    """Binary search with cached endpoint guards, a prepared project wrapper.
 
     Input and targets must be integers; input must stay sorted and unchanged.
     Setup uses constant sequence accesses and storage. In-range queries use
@@ -128,7 +131,10 @@ def build_guarded_index(input_list: Sequence[int]) -> Callable[[int], int | None
 
 
 def build_adaptive_index(input_list: Sequence[int]) -> Callable[[int], int | None]:
-    """Select an exact prepared strategy using at most 16 fixed positions.
+    """Heuristic selection among prepared lookup strategies, a project hybrid.
+
+    At most 16 fixed positions are sampled. This selects an implementation
+    rather than constructing an adaptive radix tree or fitting a learned model.
 
     Sorted integers and unchanged input during use are preconditions. Empty and
     constant inputs have direct-return fast paths. Other inputs sample positions

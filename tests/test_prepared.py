@@ -24,6 +24,13 @@ from search_algos import (
 NUMERIC_BUILDERS = (build_neighbor_index, build_guarded_index, build_adaptive_index)
 
 
+class DivergentInequalityInt(int):
+    """Keep integer equality and ordering while overriding inequality."""
+
+    def __ne__(self, other):
+        return True
+
+
 class CustomTruthSequence(Sequence):
     """Sequence truth is independent from its length and integer contents."""
 
@@ -83,6 +90,24 @@ class EqualKey:
 
 
 class PreparedSearchTests(unittest.TestCase):
+    def test_neighbor_duplicate_checks_use_equality_including_adaptive_delegation(self):
+        cases = (
+            # The interpolation probe lands on the second 1; adaptive delegates
+            # this input to neighbor lookup as well.
+            (0, 1, 1),
+            # For target 1, the probe lands on 2 at index 3. Its predecessor
+            # matches, but the first occurrence is one position earlier.
+            (0, 1, 1, 2, 2, 2, 2),
+        )
+        for data in cases:
+            values = [DivergentInequalityInt(value) for value in data]
+            targets = range(-1, data[-1] + 2)
+            expected = [data.index(target) if target in data else None for target in targets]
+            for builder in (build_neighbor_index, build_adaptive_index):
+                with self.subTest(data=data, builder=builder.__name__):
+                    lookup = builder(values)
+                    self.assertEqual([lookup(target) for target in targets], expected)
+
     def test_numeric_builders_use_sequence_length_for_empty_detection(self):
         builders = (
             *NUMERIC_BUILDERS,

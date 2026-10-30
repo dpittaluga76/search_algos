@@ -4,6 +4,7 @@ import copy
 import csv
 import io
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 from search_algos.benchmarks import DEFAULT_DATASETS, BenchmarkConfig, run_benchmarks
 from search_algos.comparison import compare_reports, load_report, render_comparison
+from search_algos.naming import algorithm_label, format_algorithm
 
 
 def report(samples=(10, 20, 30), setup=None, *, version=1, **row_changes):
@@ -54,6 +56,35 @@ def report(samples=(10, 20, 30), setup=None, *, version=1, **row_changes):
 
 
 class ComparisonTests(unittest.TestCase):
+    def test_labels_do_not_change_identity_or_require_migration_of_old_reports(self):
+        for version in (1, 2):
+            with self.subTest(version=version):
+                baseline = report([10], version=version)
+                candidate = report([5], version=version, algorithm_label="An older display label")
+                compared = compare_reports(baseline, candidate)
+                row = compared["comparisons"][0]
+                self.assertEqual(row["status"], "compared")
+                self.assertEqual(row["speedup"], 2)
+                self.assertEqual(row["algorithm"], "binary")
+                self.assertEqual(row["algorithm_label"], algorithm_label("binary"))
+                self.assertNotIn("algorithm_label", baseline["results"][0])
+                self.assertIn(format_algorithm("binary"), render_comparison(compared))
+                self.assertEqual(
+                    json.loads(render_comparison(compared, "json"))["comparisons"][0]["algorithm"],
+                    "binary",
+                )
+                exported = next(csv.DictReader(io.StringIO(render_comparison(compared, "csv"))))
+                self.assertEqual(exported["algorithm"], "binary")
+                self.assertEqual(exported["algorithm_label"], algorithm_label("binary"))
+
+    def test_unknown_custom_algorithm_labels_fall_back_to_the_identifier(self):
+        self.assertEqual(algorithm_label("custom_lookup"), "custom_lookup")
+        self.assertEqual(format_algorithm("custom_lookup"), "custom_lookup")
+        custom = report(algorithm="custom_lookup")
+        compared = compare_reports(custom, custom)
+        self.assertEqual(compared["comparisons"][0]["status"], "compared")
+        self.assertIn("custom_lookup", render_comparison(compared))
+
     def test_speedup_uses_raw_samples_and_pairs_setup_with_lookup(self):
         baseline = report([0, 100, 0], setup=[100, 0, 100])
         candidate = report([50, 50, 50], total_median_ns=99999)
@@ -481,6 +512,50 @@ class ComparisonTests(unittest.TestCase):
         compared = compare_reports(empty, empty)
         self.assertIn("No result rows", render_comparison(compared))
         self.assertIn("workload_id", render_comparison(compared, "csv"))
+
+    def test_comparison_colors_and_compact_layout_preserve_values(self):
+        for samples, ratio, color in (
+            ([5, 10, 15], "2.00x", "32"),
+            ([20, 40, 60], "0.50x", "31"),
+            ([10, 20, 30], "1.00x", "2"),
+        ):
+            compared = compare_reports(report(version=2), report(samples, version=2))
+            for width in (40, 80, 200, None):
+                with self.subTest(samples=samples, width=width):
+                    plain = render_comparison(compared, width=width)
+                    styled = render_comparison(compared, color=True, width=width)
+                    self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", styled), plain)
+                    self.assertRegex(styled, rf"\x1b\[{color}m *{re.escape(ratio)}\x1b\[0m")
+                    for text in ("[binary]", "uniform/10", "IQR overlap", "compared"):
+                        self.assertIn(text, plain)
+                    if width:
+                        self.assertLessEqual(max(map(len, plain.splitlines())), width)
+            for output_format in ("json", "csv"):
+                self.assertEqual(
+                    render_comparison(compared, output_format, color=True),
+                    render_comparison(compared, output_format),
+                )
+
+    def test_color_retains_missing_and_incomparable_explanations(self):
+        for candidate in (report(algorithm="jump"), report(size=20)):
+            compared = compare_reports(report(), candidate)
+            plain = render_comparison(compared, width=80)
+            styled = render_comparison(compared, color=True, width=80)
+            self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", styled), plain)
+            for row in compared["comparisons"]:
+                self.assertIn(row["status"], plain)
+                self.assertIn(row["reason"], " ".join(plain.split()))
+            self.assertIn("Warning:", styled)
+
+    def test_footer_wraps_in_very_narrow_terminals(self):
+        compared = compare_reports(report(), report())
+        for width in (12, 18, 20, 22):
+            for color in (False, True):
+                with self.subTest(width=width, color=color):
+                    text = render_comparison(compared, width=width, color=color)
+                    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+                    self.assertLessEqual(max(map(len, plain.splitlines())), width)
+                    self.assertIn("READING THE COMPARISON", " ".join(plain.split()))
 
     def test_load_report_validates_files_and_rejects_nonfinite_json(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -51,6 +52,12 @@ class InstalledWheelTests(unittest.TestCase):
         self.assertTrue(package.is_relative_to(prefix), package)
         self.assertFalse(package.is_relative_to(Path.cwd()))
         installed = distribution("search-algos")
+        self.assertEqual(installed.metadata["License-Expression"], "MIT")
+        license_text = installed.read_text("licenses/LICENSE")
+        self.assertIsNotNone(license_text)
+        self.assertIn("Copyright (c) 2026 Daniel Pittaluga", license_text)
+        self.assertIn("Copyright (c) 2016-2022 TheAlgorithms and contributors", license_text)
+        self.assertIn("Permission is hereby granted, free of charge", license_text)
         self.assertIn("search_algos/py.typed", [str(path) for path in installed.files or []])
         marker = Path(installed.locate_file("search_algos/py.typed")).resolve()
         self.assertTrue(marker.is_relative_to(prefix))
@@ -73,12 +80,24 @@ class InstalledWheelTests(unittest.TestCase):
             "exponential_search",
             "jump_search",
             "find_by_dict",
+            "fibonacci_search",
+            "ternary_search",
+            "ternary_search_by_recursion",
+            "double_linear_search",
+            "double_linear_search_by_recursion",
+            "sentinel_linear_search",
+            "interpolation_search_by_recursion",
         ):
             with self.subTest(algorithm=name):
                 search = getattr(search_algos, name)
                 self.assertEqual(search([1, 3, 3, 8], 3), 1)
                 self.assertIsNone(search([1, 3, 3, 8], 9))
         self.assertIs(search_algos.find_by_sets([1, 3, 3, 8], 3), True)
+        self.assertIs(search_algos.binary_search_slicing((1, 3, 3, 8), 3), True)
+        self.assertIs(search_algos.binary_search_slicing((1, 3, 3, 8), 9), False)
+        sentinel = search_algos.build_sentinel_search(iter([3, 1, 3]))
+        self.assertEqual(sentinel(3), 0)
+        self.assertIsNone(sentinel(9))
         self.assertEqual(search_algos.build_first_index([3, 1, 3]), {3: 0, 1: 1})
         radix = search_algos.build_radix_index([-3, -3, 2, 2, 8])
         self.assertEqual(radix(-3), 0)
@@ -127,7 +146,11 @@ class InstalledWheelTests(unittest.TestCase):
             script=True,
         )
         report = json.loads(output)
-        self.assertEqual(len(report["results"]), 19)
+        self.assertEqual(len(report["results"]), 27)
+        self.assertEqual(
+            {row["algorithm"] for row in report["results"] if row["result_kind"] == "membership"},
+            {"set", "binary_slicing"},
+        )
         self.assertTrue(all(row["status"] == "complete" for row in report["results"]))
         self.assertEqual({row["hits"] for row in report["results"]}, {2})
 
@@ -151,11 +174,15 @@ class InstalledWheelTests(unittest.TestCase):
             "json",
             "--output",
             str(report_path),
+            "--color",
+            "always",
         )
         self.assertEqual(stdout, "")
         report = load_report(report_path)
         self.assertEqual(report["schema_version"], 2)
-        self.assertEqual(len(report["results"]), 32)
+        self.assertEqual(len(report["results"]), 46)
+        self.assertNotIn("linear", {row["algorithm"] for row in report["results"]})
+        self.assertTrue(all(row["algorithm_label"] for row in report["results"]))
         self.assertTrue(all(row["status"] == "complete" for row in report["results"]))
         radix_rows = [row for row in report["results"] if row["algorithm"] == "radix"]
         self.assertEqual(len(radix_rows), 2)
@@ -175,10 +202,18 @@ class InstalledWheelTests(unittest.TestCase):
                 "compare", str(report_path), str(report_path), "--format", "json", module=True
             )
         )
-        self.assertEqual(len(compared["comparisons"]), 32)
+        self.assertEqual(len(compared["comparisons"]), 46)
         for row in compared["comparisons"]:
             self.assertEqual(row["status"], "compared")
             self.assertEqual(row["speedup"], 1.0)
+            self.assertTrue(row["algorithm_label"])
+        plain = self.run_command("compare", str(report_path), str(report_path), "--color", "never")
+        colored = self.run_command(
+            "compare", str(report_path), str(report_path), "--color", "always"
+        )
+        self.assertIn("\x1b[", colored)
+        self.assertNotIn("\x1b[", plain)
+        self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", colored), plain)
 
     def test_module_csv_with_cold_and_reused_spawn_workers(self):
         output = self.run_command(

@@ -1,9 +1,9 @@
 """Repeat the noisy landmark comparisons with three complete order rotations."""
 
-import hashlib
 import json
 from pathlib import Path
 
+from scripts.study_sources import source_fingerprints
 from search_algos.benchmarks import BenchmarkConfig, run_benchmarks
 from search_algos.metadata import collect_metadata
 
@@ -22,14 +22,7 @@ def main() -> None:
     study = {
         "study_schema_version": 1,
         "metadata": collect_metadata(),
-        "source_sha256": {
-            path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-            for path in (
-                "search_algos/landmark.py",
-                "search_algos/benchmarks.py",
-                "scripts/confirm_landmark.py",
-            )
-        },
+        "source_sha256": source_fingerprints(root, "scripts/confirm_landmark.py"),
         "reports": [],
     }
     for cycle in range(3):

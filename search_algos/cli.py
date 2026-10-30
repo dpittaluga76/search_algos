@@ -6,6 +6,8 @@ import argparse
 import csv
 import io
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,8 @@ from .benchmarks import (
     BenchmarkConfig,
     run_benchmarks,
 )
+from .console import Cell, Console, color_enabled, status_style
+from .naming import format_algorithm
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(*ALGORITHM_NAMES, "all"),
         nargs="+",
         default=list(DEFAULT_ALGORITHMS),
-        help="algorithms to measure; defaults include radix and prepared alternatives, including landmark_index; certified_radix is opt-in; all also includes certified_radix and multiprocessing",
+        help="defaults include radix and prepared alternatives plus eight additional searches (23 entries); linear is opt-in; certified_radix is opt-in; all also includes multiprocessing (27 entries)",
     )
     parser.add_argument("--seed", type=int, default=0, help="workload seed")
     parser.add_argument("--repetitions", type=int, default=7, help="measured batches per algorithm")
@@ -78,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-linear-work",
         type=int,
         default=50_000_000,
-        help="skip linear if size * queries * (repetitions + warmups) exceeds this limit; 0 disables",
+        help="skip linear scans and binary_slicing copies if size * queries * (repetitions + warmups) exceeds this limit; 0 disables",
     )
     parser.add_argument(
         "--time-budget",
@@ -90,10 +94,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--format", choices=("text", "json", "csv"), default="text", help="output format"
     )
     parser.add_argument("--output", type=Path, help="write a report to this file instead of stdout")
+    _add_color_argument(parser)
     return parser
 
 
-def render_report(report: dict[str, Any], output_format: str) -> str:
+def _add_color_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="text colors: auto detects terminals and respects NO_COLOR; always forces ANSI; never disables",
+    )
+
+
+def _console_options(mode: str, path: Path | None) -> tuple[bool, int | None]:
+    stream = sys.stdout if path is None else None
+    width = shutil.get_terminal_size().columns if stream is not None and stream.isatty() else None
+    return color_enabled(mode, stream), width
+
+
+def render_report(
+    report: dict[str, Any], output_format: str, *, color: bool = False, width: int | None = None
+) -> str:
     if output_format == "json":
         return json.dumps(report, indent=2, allow_nan=False) + "\n"
     if output_format == "csv":
@@ -117,14 +139,32 @@ def render_report(report: dict[str, Any], output_format: str) -> str:
 
     config = report["config"]
     metadata = report["metadata"]
-    lines = [
+    console = Console(color=color, width=width)
+    lines = console.title("BENCHMARK")
+    lines.extend(
+        console.paragraph(
+            f"Seed {config['seed']} | {config['repetitions']} measured batches | {config['queries']} queries/batch | {config['warmups']} warmups",
+            "strong",
+        )
+    )
+    for detail in (
         f"Python {metadata['python_version']} ({metadata['python_implementation']}) | {metadata['platform']}",
-        f"Seed {config['seed']} | {config['repetitions']} measured batches | {config['queries']} queries/batch | {config['warmups']} warmups",
-        "Batch times are milliseconds; IQR is the interquartile range of lookup times.",
-        "Set, dictionary, and radix-directory construction and other index preparation appear under setup; total includes per-batch setup and lookup.",
         f"Cyclic GC during measurement: {config.get('gc_mode', 'unspecified')}.",
-        "Rankings compare completed rows within the same workload, result kind, and timing scope.",
-    ]
+    ):
+        lines.extend(console.paragraph(detail, "muted"))
+    counts = []
+    for status in ("complete", "incomplete", "skipped"):
+        count = sum(row.get("status", "complete") == status for row in report["results"])
+        if count:
+            counts.append(f"{count} {status}")
+    if counts:
+        summary_style = (
+            "success"
+            if all(row.get("status", "complete") == "complete" for row in report["results"])
+            else "warning"
+        )
+        lines.append("")
+        lines.extend(console.paragraph("  |  ".join(counts), summary_style))
     result_descriptions = {
         "first_index": "first matching index or None",
         "membership": "whether the target is present (True/False)",
@@ -157,45 +197,96 @@ def render_report(report: dict[str, Any], output_format: str) -> str:
             (row["total_median_ns"] for row in rows if row.get("status", "complete") == "complete"),
             None,
         )
+        lines.extend(["", console.rule()])
         lines.extend(
-            [
-                "",
+            console.paragraph(
                 f"{dataset}, size {size}: {rows[0]['hits']} hits / {rows[0]['queries']} queries",
-                f"Workload: {workload_id}",
-                f"Result: {result_kind} ({result_descriptions.get(result_kind, 'custom result contract')})",
-                f"Timing scope: {timing_scope} ({scope_descriptions.get(timing_scope, 'custom timing scope')})",
-                f"{'algorithm':<22} {'status':<10} {'setup med':>12} {'lookup med':>12} {'lookup IQR':>12} {'total med':>12} {'ns/query':>12} {'vs fastest':>11}",
-            ]
+                "heading",
+            )
         )
+        for detail in (
+            f"Result: {result_kind} ({result_descriptions.get(result_kind, 'custom result contract')})",
+            f"Timing scope: {timing_scope} ({scope_descriptions.get(timing_scope, 'custom timing scope')})",
+            f"Workload: {workload_id}",
+            "Times in ms; ns/query is amortized lookup time.",
+        ):
+            lines.extend(console.paragraph(detail, "muted"))
+        lines.append("")
+        table = []
         for row in rows:
             total = row["total_median_ns"]
             status = row.get("status", "complete")
+            best = status == "complete" and total is not None and total == fastest
             relative = "n/a"
             if status == "complete" and total is not None and fastest is not None:
                 relative = (
                     f"{total / fastest:.2f}x" if fastest else ("1.00x" if not total else "n/a")
                 )
-            lines.append(
-                f"{row['algorithm']:<22} {status:<10} "
-                f"{_number(row['setup_median_ns'], 1e6):>12} {_number(row['lookup_median_ns'], 1e6):>12} "
-                f"{_number(row['lookup_iqr_ns'], 1e6):>12} {_number(total, 1e6):>12} "
-                f"{_number(row['per_query_median_ns'], precision=1):>12} {relative:>11}"
+            table.append(
+                [
+                    Cell(
+                        format_algorithm(row["algorithm"]) + (" *" if best else ""),
+                        "best" if best else "",
+                    ),
+                    Cell(status, status_style(status)),
+                    Cell(_number(row["setup_median_ns"], 1e6)),
+                    Cell(_number(row["lookup_median_ns"], 1e6)),
+                    Cell(_number(row["lookup_iqr_ns"], 1e6), "muted"),
+                    Cell(_number(total, 1e6), "best" if best else "strong"),
+                    Cell(_number(row["per_query_median_ns"], precision=1)),
+                    Cell(relative, "best" if best else "muted"),
+                ]
+            )
+        lines.extend(
+            console.table(
+                (
+                    "algorithm [identifier]",
+                    "status",
+                    "setup med",
+                    "lookup med",
+                    "lookup IQR",
+                    "total med",
+                    "ns/query",
+                    "vs fastest",
+                ),
+                table,
+                right=(2, 3, 4, 5, 6, 7),
+            )
+        )
+        if fastest is not None:
+            lines.extend(
+                console.paragraph(
+                    "* Fastest total median in this table (including ties).", "success"
+                )
             )
         for row in rows:
             if row.get("reason"):
-                lines.append(
-                    f"  {row['algorithm']}: {row['reason']} ({row.get('repetitions_completed', 0)} measured batches completed)"
+                lines.extend(
+                    console.paragraph(
+                        f"{format_algorithm(row['algorithm'])}: {row['reason']} ({row.get('repetitions_completed', 0)} measured batches completed)",
+                        "warning",
+                        indent=2,
+                    )
                 )
             if row["algorithm"] == "parallel_warm":
-                lines.append(
-                    f"  parallel_warm lifecycle (excluded from batch totals): startup {_number(row.get('pool_startup_ns'), 1e6)} ms, shutdown {_number(row.get('pool_shutdown_ns'), 1e6)} ms"
+                lines.extend(
+                    console.paragraph(
+                        f"{format_algorithm('parallel_warm')} lifecycle (excluded from batch totals): startup {_number(row.get('pool_startup_ns'), 1e6)} ms, shutdown {_number(row.get('pool_shutdown_ns'), 1e6)} ms",
+                        "muted",
+                        indent=2,
+                    )
                 )
-    lines.extend(
-        [
-            "",
-            "ns/query is amortized lookup time. Rows rank by total median within each table; vs fastest is total / fastest complete total in that table (1.00x is fastest). Incomplete/skipped rows are not ranked. JSON/CSV include raw samples and workload IDs.",
-        ]
-    )
+    if not groups:
+        lines.extend(console.paragraph("No result rows.", "muted"))
+    lines.extend(["", console.rule()])
+    lines.extend(console.paragraph("READING THE RESULTS", "strong"))
+    for note in (
+        "Batch times are milliseconds; IQR is the interquartile range of lookup times.",
+        "Set, dictionary, and radix-directory construction and other index preparation appear under setup; total includes per-batch setup and lookup.",
+        "Rankings compare completed rows within the same workload, result kind, and timing scope.",
+        "Rows rank by total median; vs fastest is total / fastest complete total in that table (1.00x is fastest). Incomplete/skipped rows are not ranked. JSON/CSV include raw samples and workload IDs.",
+    ):
+        lines.extend(console.paragraph(note, "muted"))
     return "\n".join(lines) + "\n"
 
 
@@ -205,7 +296,21 @@ def _number(value: float | None, divisor: float = 1, precision: int = 6) -> str:
 
 def _write_output(text: str, path: Path | None) -> None:
     if path is None:
-        sys.stdout.write(text)
+        output = sys.stdout
+        try:
+            output.write(text)
+            output.flush()
+        except OSError:
+            # Redirect the same descriptor so a shutdown flush cannot retry
+            # buffered bytes against a pipe whose reader has already closed.
+            try:
+                with open(os.devnull, "w") as sink:
+                    os.dup2(sink.fileno(), output.fileno())
+            except (AttributeError, OSError, ValueError):
+                # Custom streams may have no descriptor. Preserve the original
+                # output error for the command's normal error handler.
+                pass
+            raise
     else:
         with path.open("w", encoding="utf-8", newline="") as output:
             output.write(text)
@@ -223,12 +328,18 @@ def _compare_main(argv: list[str]) -> int:
     parser.add_argument("--metric", choices=("total", "lookup"), default="total")
     parser.add_argument("--format", choices=("text", "json", "csv"), default="text")
     parser.add_argument("--output", type=Path)
+    _add_color_argument(parser)
     args = parser.parse_args(argv)
     try:
         compared = compare_reports(
             load_report(args.baseline), load_report(args.candidate), metric=args.metric
         )
-        _write_output(render_comparison(compared, args.format), args.output)
+        color, width = (
+            _console_options(args.color, args.output) if args.format == "text" else (False, None)
+        )
+        _write_output(
+            render_comparison(compared, args.format, color=color, width=width), args.output
+        )
     except (OSError, ValueError, RecursionError) as error:
         print(f"{parser.prog}: error: {error}", file=sys.stderr)
         return 1
@@ -261,7 +372,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as error:
         parser.error(str(error))
     try:
-        report = render_report(run_benchmarks(config), args.format)
+        results = run_benchmarks(config)
+        color, width = (
+            _console_options(args.color, args.output) if args.format == "text" else (False, None)
+        )
+        report = render_report(results, args.format, color=color, width=width)
         _write_output(report, args.output)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"{parser.prog}: error: {error}", file=sys.stderr)

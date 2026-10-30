@@ -1,4 +1,7 @@
-"""Routed searches with cold or explicitly reused spawned workers.
+"""Range-routed searches in cold or reused process pools; binary by default.
+
+These are execution modes of the chosen search function, not additional
+algorithm families. See docs/algorithm-names.md for the terminology audit.
 
 Routing requires ascending sorted input and sends each target only to the first
 chunk that could contain it. This preserves first-index semantics when duplicate
@@ -104,7 +107,7 @@ def _search_chunk(
                     isinstance(index, bool)
                     or not isinstance(index, int)
                     or not 0 <= index < len(values)
-                    or values[index] != target
+                    or not values[index] == target
                 ):
                     raise ValueError("search function must return a matching index or None")
                 index += offset

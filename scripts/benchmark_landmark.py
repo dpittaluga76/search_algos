@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
 from scripts.benchmark_certified import CUSTOM_DATASETS, make_custom_workload, measure_custom
+from scripts.study_sources import source_fingerprints
 from search_algos.benchmarks import DEFAULT_ALGORITHMS, BenchmarkConfig, run_benchmarks
 from search_algos.cli import render_report
 from search_algos.metadata import collect_metadata
@@ -31,18 +31,9 @@ def main() -> None:
     study: dict = {
         "study_schema_version": 1,
         "metadata": collect_metadata(),
-        "source_sha256": {
-            path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-            for path in (
-                "search_algos/algorithms.py",
-                "search_algos/prepared.py",
-                "search_algos/certified.py",
-                "search_algos/landmark.py",
-                "search_algos/benchmarks.py",
-                "scripts/benchmark_landmark.py",
-                "scripts/benchmark_certified.py",
-            )
-        },
+        "source_sha256": source_fingerprints(
+            root, "scripts/benchmark_landmark.py", "scripts/benchmark_certified.py"
+        ),
         "reports": [],
         "custom_results": [],
     }

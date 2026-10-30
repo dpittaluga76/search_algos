@@ -29,6 +29,12 @@ setup and lookup samples. The study JSON is a separate container format: each
 entry in `cli_reports` is a normal schema-2 CLI report, while custom workloads
 and allocation measurements have their own sections.
 
+Newly generated studies fingerprint every Python source under `search_algos/`,
+plus the study script and shared fingerprint helper. This covers all default
+searches, allocation builders, and shared measurement code, including future
+package modules. The `source_sha256` path-to-hash format stays the same;
+the historical results retain their original source hashes.
+
 The main comparisons use 100,000 values, 20,000 queries, 50% hits, seeds 0/1/2,
 one warmup, seven measured batches, and cyclic GC disabled during timing. Each
 prepared index is rebuilt for every batch. Algorithm order rotates between

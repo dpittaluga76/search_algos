@@ -1,4 +1,4 @@
-"""Exact local representations behind a radix directory for integer search.
+"""Project radix hybrid with verified arithmetic and bitmap shortcuts.
 
 This experimental strategy leaves the existing radix and prepared strategies
 unchanged. Input sorting, integer values and targets, and unchanged input during
@@ -51,7 +51,10 @@ def _certify_bucket(values: list[int], positions: list[int], stop: int) -> _Buck
 def build_certified_radix_index(
     input_list: Sequence[int], *, bits: int = 12
 ) -> Callable[[int], int | None]:
-    """Prepare exact per-bucket shortcuts for first-index integer lookups.
+    """Radix index with verified arithmetic/bitmap shortcuts, a project hybrid.
+
+    This combines per-bucket representations with bounded binary search; the
+    complete combination is described in docs/algorithm-names.md.
 
     The ascending integer input must remain unchanged while the returned
     callable is used. Integer lookup targets are required. These are unchecked

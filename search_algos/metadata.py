@@ -42,6 +42,7 @@ def _source_root() -> Path | None:
 
 
 def _command(arguments: list[str], cwd: Path | None = None) -> str | None:
+    """Decode Git/sysctl output as UTF-8 regardless of the system locale."""
     creation_flags = 0
     if sys.platform == "win32":
         creation_flags = subprocess.CREATE_NO_WINDOW
@@ -51,6 +52,7 @@ def _command(arguments: list[str], cwd: Path | None = None) -> str | None:
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=2,
             check=False,
             creationflags=creation_flags,

@@ -27,14 +27,18 @@ python -m pip install .
 search-algos --size 1000 --algorithms binary bisect interpolation
 ```
 
-The default run uses 1,000 elements, four dataset distributions, sixteen sequential
-algorithms, 100 queries per batch, one warmup batch, seven measured batches, and
+The default run uses 1,000 elements, four dataset distributions, 23 sequential
+benchmark entries, 100 queries per batch, one warmup batch, seven measured batches, and
 seed 0. Cyclic garbage collection is disabled during measurements. The radix
 directory and `neighbor_prepared`, `dict_reverse`, `guarded_prepared`,
-`adaptive_index`, and `landmark_index` are included by default alongside the original sequential
-algorithms. `certified_radix`, the adversarial dataset, and both multiprocessing
-modes are opt-in.
+`adaptive_index`, and `landmark_index` are included in the default comparisons.
+Plain `linear`, `certified_radix`, both multiprocessing modes, and the adversarial
+dataset are opt-in.
 Process startup usually costs much more than a single binary search.
+The eight additional search entries are included by default: Fibonacci,
+iterative and recursive ternary, iterative and recursive double linear, sentinel linear, recursive
+interpolation, and slicing binary membership. Use `--algorithms all` to select all
+27 entries, including multiprocessing.
 
 ## BISECT
 
@@ -149,7 +153,7 @@ and end indices are both `4`.
 | --- | --- | --- |
 | `--size`, `--sizes` | One or more nonnegative dataset sizes | `1000` |
 | `--datasets` | One or more of `uniform`, `gapped`, `duplicates`, `skewed`, `adversarial` | All except `adversarial` |
-| `--algorithms` | One or more names from the list below; use `all` alone for all nineteen | Sixteen sequential algorithms, including radix, the original prepared alternatives, and landmark_index |
+| `--algorithms` | One or more identifiers from the list below; use `all` alone for all 27 | 23 sequential entries, including all eight additional searches; plain `linear` is opt-in |
 | `--seed` | Integer random seed | `0` |
 | `--repetitions` | Positive number of measured batches | `7` |
 | `--warmups` | Nonnegative number of discarded warmup batches | `1` |
@@ -157,10 +161,11 @@ and end indices are both `4`.
 | `--hit-rate` | Requested fraction of queries that find a value, from 0 to 1 | `0.5` |
 | `--workers` | Positive worker count for multiprocessing | Available CPU count |
 | `--gc` | Cyclic GC policy during measurements: `enabled` or `disabled` | `disabled` |
-| `--max-linear-work` | Skip linear search when `size × queries × (repetitions + warmups)` exceeds this limit; `0` disables the limit | `50000000` |
+| `--max-linear-work` | Skip `linear`, `double_linear`, `double_linear_recursive`, `sentinel`, and `binary_slicing` when `size × queries × (repetitions + warmups)` exceeds this limit; `0` disables the limit | `50000000` |
 | `--time-budget` | Soft execution budget in seconds per algorithm/workload; `0` disables the budget | `5` |
 | `--format` | `text`, `json`, or `csv` | `text` |
 | `--output` | Destination file; its parent directory must exist | Standard output |
+| `--color` | Text colors: `auto`, `always`, or `never` | `auto` |
 
 Use `--help` for the full command reference. A zero-size dataset is valid and
 has no successful queries, regardless of the requested hit rate. Other hit
@@ -169,10 +174,58 @@ the number of elements, and by 61 on Windows. Algorithm names are `linear`,
 `binary`, `bisect`, `recursive`, `interpolation`, `interpolation_hybrid`,
 `exponential`, `jump`, `set`, `dict`, `radix`, `neighbor_prepared`, `dict_reverse`,
 `guarded_prepared`, `adaptive_index`, `landmark_index`, `certified_radix`, `parallel`, and
-`parallel_warm`. The experimental `certified_radix` strategy is opt-in; select
-it explicitly or use `--algorithms all`. All original default entries are retained, with `landmark_index` added.
+`parallel_warm`, `fibonacci`, `ternary`, `ternary_recursive`, `double_linear`,
+`double_linear_recursive`, `sentinel`, `interpolation_recursive`, and `binary_slicing`.
+All eight additional searches are selected by default. Plain `linear`,
+`certified_radix`, `parallel`, and `parallel_warm` are opt-in; select them
+explicitly or use `--algorithms all`. Every existing identifier remains available.
 
-The work limit prevents unexpectedly expensive linear scans before they start.
+The [algorithm naming guide](docs/algorithm-names.md) maps all 27 identifiers and
+public APIs to established families or explicit project-variant descriptions,
+with primary sources. In particular, `radix` is a **Radix Binary Search (RBS)
+variant**: a flat radix directory followed by bounded binary search. It searches
+already sorted data. `ternary` and `ternary_recursive` mean **ternary array
+search**. The prepared hybrids have descriptive project names, and `parallel`
+and `parallel_warm` denote process-pool execution modes. Function names and
+benchmark identifiers remain stable for existing callers and saved reports.
+Text tables show the descriptive label followed by the identifier in brackets,
+for example `Radix Binary Search (RBS) [radix]`. JSON and CSV retain `algorithm`
+as the identifier and add `algorithm_label` for the descriptive name. Saved-report
+comparisons display the same labels and continue matching on the existing
+identity fields; labels can change without breaking comparisons with old reports.
+
+Text reports use cyan section headings, aligned timing columns, and green
+highlights for the fastest completed rows in each comparable group. A `*` marks
+those rows, including ties, so the distinction remains visible without color.
+Skipped and incomplete rows appear in yellow with their explanations. Narrow
+terminals automatically use stacked rows that retain the full algorithm names,
+identifiers, and every metric; wider terminals use tables.
+
+Both benchmark and `compare` commands accept `--color auto|always|never`.
+The default colors supported interactive terminals, including Windows consoles.
+Pipes and `--output` files are plain text by default. A nonempty
+[`NO_COLOR`](https://no-color.org/) environment variable or `TERM=dumb` disables
+automatic colors. `--color always` explicitly forces ANSI color, including in
+text files or pipelines; `--color never` disables it. JSON and CSV never receive
+presentation escape codes. Formatting runs after measurements and adds no runtime
+dependencies.
+
+```console
+python -m search_algos --size 1000 --datasets uniform --algorithms binary bisect radix
+python -m search_algos --color never
+python -m search_algos compare baseline.json candidate.json --color always
+```
+
+In comparison reports, green speed ratios indicate a faster candidate, red a
+slower one, and unchanged ratios remain neutral. These colors describe median
+timings; they do not indicate statistical significance. IQR overlap, warnings,
+and rows that cannot be compared remain visible.
+
+The work limit prevents unexpectedly expensive linear scans and tuple slicing
+before they start. It also applies to sentinel preparation and lookup together;
+skipping the entry does not construct its buffer. Interpolation entries retain
+their distribution-sensitive linear worst case and are controlled by the soft
+time budget between batches.
 The time budget includes warmups and is checked between batches: it cannot
 interrupt an already-running batch, so a batch can exceed the budget. Skipped
 and incomplete rows remain in the report with a reason and completed sample
@@ -198,11 +251,18 @@ directory. Compare lookup costs for an already-prepared index and total costs
 when construction is part of your application. Short query batches may not
 amortize the setup cost.
 
-Run the sixteen default sequential algorithms, including the prepared alternatives,
+Run the 23 default sequential entries, including all eight additional searches,
 without specifying `--algorithms`:
 
 ```console
 python -m search_algos --size 100000 --datasets uniform gapped duplicates --queries 20000
+```
+
+The work cap may skip the default linear-cost variants at this size and query
+count. Include the plain linear baseline explicitly when needed:
+
+```console
+python -m search_algos --size 1000 --algorithms linear binary radix
 ```
 
 Compare the prepared alternatives with selected baselines across regular,
@@ -305,6 +365,15 @@ assert find_by_sets(values, 9) is False
 | `interpolation_search_hybrid` | Ascending, finite numeric values | First match; falls back to binary search after a logarithmic probe limit |
 | `exponential_search` | Sequence sorted in ascending order | First match using galloping bounds followed by binary search |
 | `jump_search` | Sequence sorted in ascending order | First match using square-root blocks and a linear block scan |
+| `fibonacci_search` | Sequence sorted in ascending order | First match using Fibonacci-sized intervals |
+| `ternary_search` | Sequence sorted in ascending order | First match using thirds and a small linear finish |
+| `ternary_search_by_recursion` | Sequence sorted in ascending order | First match using recursive thirds and a small linear finish |
+| `double_linear_search` | Sequence of equality-comparable values; sorting is unnecessary | First match scanning from both ends |
+| `double_linear_search_by_recursion` | Sequence of equality-comparable values; sorting is unnecessary | First match using recursive batches of a double-ended scan |
+| `sentinel_linear_search` | Iterable of values with reflexive equality; sorting is unnecessary | First match using a sentinel in a fresh private copy |
+| `build_sentinel_search` | Iterable of values with reflexive equality; sorting is unnecessary | Reusable lookup over a private shallow copy; first index or `None` |
+| `interpolation_search_by_recursion` | Ascending, finite numeric values | First match using recursive interpolation batches and numeric safeguards |
+| `binary_search_slicing` | Ascending sequence supporting slicing | Boolean membership using recursive slices |
 | `find_by_sets` | Iterable of hashable values and a hashable target | `True` or `False` |
 | `build_first_index` | Iterable of hashable values; sorting is unnecessary | Dictionary mapping each value to its first index |
 | `find_by_dict` | Iterable of hashable values and a hashable target | First matching index, or `None`; builds an index for this call |
@@ -327,10 +396,66 @@ For custom objects, ordering must agree with equality: objects that tie under
 sorting must compare equal with `==`. For records sorted by only one field,
 search a corresponding sequence of keys, or use `linear_search` when matching
 the complete object by equality.
-Use the two-argument recursive search API to let it manage its bounds. Explicit
+Use the two-argument `binary_search_by_recursion` API to let it manage its bounds. Explicit
 `left` and `right` bounds remain available; `right` is inclusive and both bounds
 must describe a valid search range. Within a bounded search, the result is the
 first matching index in that range. Boolean bounds are rejected.
+
+### Additional search strategies
+
+All eight entries live in `search_algos.alternatives` and are also exported from
+`search_algos`. Each has a distinct name and benchmark entry. Their implementations
+are adapted from TheAlgorithms/Python, with first-occurrence handling, quiet APIs,
+Python 3.10-compatible types, and caller-owned input preservation.
+
+| Benchmark name | Strategy and cost |
+| --- | --- |
+| `fibonacci` | Shrinks Fibonacci-sized intervals toward the first match. O(log n) comparisons and O(1) state for fixed-width arithmetic. Fibonacci numbers are computed locally per lookup, with no global cache or hidden warmup state. |
+| `ternary` | Divides the candidate interval into thirds, then linearly scans fewer than ten elements. O(log n) comparisons and O(1) state. |
+| `ternary_recursive` | The same thirds strategy with O(log n) recursive stack space and the same small linear finish. |
+| `double_linear` | Scans from both ends. Right-side matches remain candidates until earlier duplicates are excluded. O(n) worst-case time and O(1) state; first-index semantics can remove the early-return advantage of a right-side hit. |
+| `double_linear_recursive` | Recursively examines pairs from both ends, resuming after batches of at most 64 pairs. O(n) worst-case time and bounded recursive stack space. |
+| `sentinel` | Copies the input once per batch into a private list, then appends/removes each query's sentinel. Preparation is O(n) time and space; lookup is O(n) worst-case time. The benchmark measures preparation separately and reuses the buffer across the batch. |
+| `interpolation_recursive` | Uses recursive interpolation, resuming after batches of at most 64 probes. O(n) worst-case time and bounded recursive stack space. Unsafe floating-point arithmetic falls back to bounded bisection; slow progress continues interpolating. |
+| `binary_slicing` | Boolean membership through recursive binary search with slices. O(log n) comparisons and stack depth, but O(n) worst-case copying time and extra space on lists/tuples. Slice creation remains inside the lookup timer. |
+
+The bounded recursive batches preserve their strategies without changing Python's
+process-wide recursion limit. Recursive helpers avoid reference cycles, releasing
+their input references even with cyclic GC disabled during benchmarks.
+Sorted numeric interpolation supports arbitrarily
+large integers and finite floats, including a bisection fallback when mixed
+numeric subtraction rounds a nonzero span to zero. Input preconditions are not
+validated by an extra scan. Other than sentinel's private copy, the additions
+require no preparation; their benchmark setup samples are zero.
+
+Compare all eight with selected baselines:
+
+```console
+python -m search_algos --size 1000 --datasets uniform duplicates adversarial --algorithms binary set fibonacci ternary ternary_recursive double_linear double_linear_recursive sentinel interpolation_recursive binary_slicing --queries 20 --seed 42
+```
+
+`binary_slicing` joins `set` in the Boolean membership comparison group. The other
+seven return first indices and join that comparison group. The two result kinds
+have separate rankings, and every timed batch is checked for correctness.
+
+The direct sentinel API includes its private copy on every call. For reuse:
+
+```python
+from search_algos import build_sentinel_search, sentinel_linear_search
+
+values = [3, 1, 3]
+assert sentinel_linear_search(values, 3) == 0
+assert values == [3, 1, 3]
+lookup = build_sentinel_search(iter(values))
+assert lookup(1) == 1
+assert lookup(9) is None
+assert lookup(3) == 0
+```
+
+The reusable sentinel callable snapshots the container with a shallow copy.
+Elements must remain unchanged, and equality must be reflexive. The sentinel is
+removed even if equality raises an exception. Use the callable sequentially;
+concurrent calls and reentry from equality methods are unsupported.
 
 `find_by_sets` and `find_by_dict` construct their hash structures on every call.
 For repeated lookups, construct the structure once and reuse it:
@@ -635,8 +760,8 @@ All algorithms in a comparison receive the same sequence and queries. Dataset
 generation, sorting, expected-result calculation, and correctness verification
 are outside the lookup timer.
 
-Index searches locate the first occurrence of a value; set lookup answers only
-whether the value is present. The exported `result_kind` field identifies these
+Index searches locate the first occurrence of a value; set lookup and slicing
+binary search answer whether the value is present. The exported `result_kind` field identifies these
 operations as `first_index` and `membership`. Sharing workloads makes the inputs
 comparable, but the operations provide different information; interpret their
 timings according to the result your application needs.
@@ -662,7 +787,7 @@ single repetition. Every measured batch is checked against expected results
 after timing, and an incorrect result aborts the run. Algorithm order rotates
 between repetitions to reduce bias from always running the same algorithm first.
 
-Set construction and every prepared index are timed separately on every warmup
+Set construction, sentinel buffer copying, and every prepared index are timed separately on every warmup
 and measured repetition. This includes cached bounds, neighbor-search state,
 reverse dictionary construction, and adaptive sampling plus the selected index
 construction. The same prepared lookup is reused throughout its batch. Total
@@ -702,6 +827,8 @@ each result and encodes sample lists as JSON within cells. The schema version is
 
 | Field | Interpretation |
 | --- | --- |
+| `algorithm` | Stable benchmark identifier used for CLI selection and report matching |
+| `algorithm_label` | Descriptive display name; presentation metadata, excluded from row identity |
 | `status`, `reason` | `complete`, `incomplete`, or `skipped`, plus an explanation when work was limited |
 | `repetitions_completed`, `warmups_completed` | Number of completed measured and warmup batches |
 | `setup_median_ns` | Median per-batch set construction or index preparation cost; zero for unprepared searches |
@@ -762,9 +889,9 @@ type checkers.
 `python scripts/verify_release.py` builds a source distribution, then builds its
 wheel from that archive and installs it into a fresh temporary virtual environment.
 It checks that the archive includes the compatibility launcher, complete test
-sources, and release verifier. It runs from outside the source checkout, clears
-Python import-path overrides, and verifies that imports come from the installed
-package. Checks cover the public API, installed `py.typed` marker, console and
+sources, study scripts, and release verifier. It runs from outside the source
+checkout, clears Python import-path overrides, and verifies that imports come
+from the installed package. Checks cover the public API, installed `py.typed` marker, console and
 module commands, the shipped compatibility launcher with all algorithms, JSON
 and CSV exports, saved-report comparison, and spawned workers. Temporary build
 and test files are cleaned up when the check finishes. Building requires access
@@ -784,7 +911,10 @@ The implementation is split by responsibility:
 
 ```text
 search_algos/
-    algorithms.py   Pure search functions
+    algorithms.py   Original pure search functions
+    alternatives.py Eight additional default searches and sentinel preparation
+    naming.py       Descriptive labels for stable benchmark identifiers
+    console.py      Terminal colors and responsive text layouts
     certified.py    Certified local representations behind a radix directory
     landmark.py     Stride, duplicate-run, and compact-directory hybrid
     prepared.py     Separate prepared search alternatives and adaptive selection
@@ -805,4 +935,18 @@ scripts/
     verify_release.py  Build and test an installed wheel outside the checkout
 ```
 
-This project is distributed under GPL-3.0-only. See [LICENSE](LICENSE).
+This project is distributed under the MIT license. See [LICENSE](LICENSE), which
+includes the project copyright and the upstream MIT copyright and permission notice.
+
+The additional searches are adapted from
+[TheAlgorithms/Python searches](https://github.com/TheAlgorithms/Python/tree/6e03a48579ca212a08b36be00378f887dc41a003/searches)
+at commit `6e03a48579ca212a08b36be00378f887dc41a003`:
+
+- `fibonacci_search.py`
+- `ternary_search.py` (iterative and recursive)
+- `double_linear_search.py` and `double_linear_search_recursion.py`
+- `sentinel_linear_search.py`
+- `interpolation_search.py` (recursive variant)
+- `simple_binary_search.py` (Boolean slicing variant)
+
+Their upstream notice is Copyright (c) 2016-2022 TheAlgorithms and contributors.

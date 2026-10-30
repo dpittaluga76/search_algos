@@ -27,6 +27,12 @@ python -m search_algos --size 100000 --datasets uniform gapped duplicates --quer
 
 [Default report](default-cli.txt), [default schema-2 JSON](default-cli.json), [initial study](results.json), and [confirmation study](confirmation.json) preserve individual samples and environment metadata. Source hashes identify the measured uncommitted implementation.
 
+Newly generated studies fingerprint every Python source under `search_algos/`,
+plus their study scripts and shared fingerprint helper. This includes all
+algorithm implementations and shared measurement code, and automatically covers
+new package modules. The `source_sha256` path-to-hash format stays the same;
+historical artifacts retain their original source hashes.
+
 ### Initial requested workload
 
 | Dataset | landmark total ms | Best previous strategy | Previous total ms | landmark rank |

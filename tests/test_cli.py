@@ -3,6 +3,8 @@
 import csv
 import io
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -10,8 +12,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from search_algos.benchmarks import ALGORITHM_NAMES
+from search_algos.benchmarks import ADDITIONAL_ALGORITHMS, ALGORITHM_NAMES
 from search_algos.cli import main, render_report
+from search_algos.naming import ALGORITHM_LABELS, format_algorithm
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED_ALGORITHMS = (
@@ -150,6 +153,72 @@ class CliTests(unittest.TestCase):
             self.assertIn("error:", completed.stderr)
             self.assertNotIn("Traceback", completed.stderr)
 
+    def test_closed_stdout_pipes_report_errors_before_interpreter_shutdown(self):
+        saved = benchmark_report(report_row("binary", 2))
+        saved["schema_version"] = 1
+        saved["results"][0].update(setup_samples_ns=[0], lookup_samples_ns=[2])
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "baseline.json"
+            source.write_text(json.dumps(saved), encoding="utf-8")
+            benchmark = [
+                "--size",
+                "10",
+                "--datasets",
+                "uniform",
+                "--queries",
+                "2",
+                "--repetitions",
+                "1",
+                "--warmups",
+                "0",
+                "--algorithms",
+                "binary",
+            ]
+            for arguments in (benchmark, ["compare", str(source), str(source)]):
+                for output_format in ("text", "json", "csv"):
+                    with self.subTest(arguments=arguments, output_format=output_format):
+                        reader, writer = os.pipe()
+                        # Close before spawning so the child can never race the reader.
+                        os.close(reader)
+                        try:
+                            completed = subprocess.run(
+                                [
+                                    sys.executable,
+                                    "-B",
+                                    "-m",
+                                    "search_algos",
+                                    *arguments,
+                                    "--format",
+                                    output_format,
+                                ],
+                                cwd=ROOT,
+                                stdout=writer,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                timeout=30,
+                            )
+                        finally:
+                            os.close(writer)
+                        self.assertEqual(completed.returncode, 1, completed.stderr)
+                        self.assertIn("error:", completed.stderr)
+                        self.assertNotIn("Exception ignored", completed.stderr)
+                        self.assertNotIn("Traceback", completed.stderr)
+
+    def test_custom_stdout_errors_are_not_masked_by_descriptor_cleanup(self):
+        saved = benchmark_report(report_row("binary", 2))
+        for operation in ("write", "flush"):
+            output, errors = io.StringIO(), io.StringIO()
+            with (
+                self.subTest(operation=operation),
+                patch("search_algos.cli.run_benchmarks", return_value=saved),
+                patch("sys.stdout", output),
+                patch("sys.stderr", errors),
+                patch.object(output, operation, side_effect=OSError("original output failure")),
+            ):
+                self.assertEqual(main(["--format", "json"]), 1)
+                self.assertIn("error: original output failure", errors.getvalue())
+                self.assertNotIn("Traceback", errors.getvalue())
+
     def test_all_algorithms_include_radix_and_parallel_in_a_real_cli_run(self):
         for script in (False, True):
             with self.subTest(script=script):
@@ -179,7 +248,9 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(len(rows), len(ALGORITHM_NAMES))
                 names = [row["algorithm"] for row in rows]
                 self.assertEqual(len(names), len(set(names)))
-                for algorithm in (*PREPARED_ALGORITHMS, "certified_radix"):
+                for row in rows:
+                    self.assertEqual(row["algorithm_label"], ALGORITHM_LABELS[row["algorithm"]])
+                for algorithm in (*PREPARED_ALGORITHMS, "certified_radix", *ADDITIONAL_ALGORITHMS):
                     self.assertEqual(names.count(algorithm), 1)
                 radix = next(row for row in rows if row["algorithm"] == "radix")
                 self.assertEqual(radix["result_kind"], "first_index")
@@ -189,9 +260,49 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(parallel["timing_scope"], "batch_with_process_startup")
                 self.assertEqual(parallel["hits"], 2)
 
-    def test_default_run_preserves_baselines_and_adds_landmark_index(self):
+    def test_additional_entries_export_correct_result_kinds_to_json_and_csv(self):
+        for output_format in ("json", "csv"):
+            with self.subTest(output_format=output_format):
+                completed = self.run_cli(
+                    "--size",
+                    "0",
+                    "40",
+                    "--datasets",
+                    "duplicates",
+                    "--algorithms",
+                    *ADDITIONAL_ALGORITHMS,
+                    "--queries",
+                    "4",
+                    "--warmups",
+                    "0",
+                    "--repetitions",
+                    "1",
+                    "--time-budget",
+                    "0",
+                    "--format",
+                    output_format,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                rows = (
+                    json.loads(completed.stdout)["results"]
+                    if output_format == "json"
+                    else list(csv.DictReader(io.StringIO(completed.stdout)))
+                )
+                self.assertEqual(len(rows), 16)
+                for row in rows:
+                    self.assertEqual(row["status"], "complete")
+                    self.assertEqual(row["algorithm_label"], ALGORITHM_LABELS[row["algorithm"]])
+                    kind = "membership" if row["algorithm"] == "binary_slicing" else "first_index"
+                    self.assertEqual(row["result_kind"], kind)
+                    samples = row["setup_samples_ns"]
+                    if output_format == "csv":
+                        samples = json.loads(samples)
+                    self.assertEqual(len(samples), 1)
+                    if row["algorithm"] != "sentinel":
+                        self.assertEqual(samples, [0])
+
+    def test_default_run_adds_all_eight_and_keeps_linear_available_explicitly(self):
         expected = {
-            "linear",
             "binary",
             "bisect",
             "recursive",
@@ -203,6 +314,7 @@ class CliTests(unittest.TestCase):
             "dict",
             "radix",
             *PREPARED_ALGORITHMS,
+            *ADDITIONAL_ALGORITHMS,
         }
         for script in (False, True):
             with self.subTest(script=script):
@@ -224,7 +336,7 @@ class CliTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
                 rows = json.loads(completed.stdout)["results"]
-                self.assertEqual(len(rows), 32)
+                self.assertEqual(len(rows), 46)
                 self.assertTrue(all(row["status"] == "complete" for row in rows))
                 for size in (0, 10):
                     algorithms = [row["algorithm"] for row in rows if row["size"] == size]
@@ -261,7 +373,7 @@ class CliTests(unittest.TestCase):
                         for algorithm in ("bisect", "radix", "dict"):
                             self.assertTrue(
                                 any(
-                                    line.startswith(algorithm + " ")
+                                    line.startswith(format_algorithm(algorithm) + " ")
                                     for line in completed.stdout.splitlines()
                                 )
                             )
@@ -345,7 +457,7 @@ class CliTests(unittest.TestCase):
                         for algorithm in expected_algorithms:
                             self.assertTrue(
                                 any(
-                                    line.startswith(algorithm + " ")
+                                    line.startswith(format_algorithm(algorithm) + " ")
                                     for line in completed.stdout.splitlines()
                                 )
                             )
@@ -401,13 +513,26 @@ class CliTests(unittest.TestCase):
             ],
         )
         first = lines.index(headers[0])
-        self.assertTrue(lines[first + 5].startswith("bisect "))
-        self.assertTrue(lines[first + 5].endswith("1.00x"))
-        self.assertTrue(lines[first + 6].endswith("4.00x"))
         second = lines.index(headers[1])
-        self.assertTrue(lines[second + 6].endswith("n/a"))
         third = lines.index(headers[2])
-        self.assertTrue(lines[third + 6].endswith("1.00x"))
+        for start, end, ratios in (
+            (first, second, ("1.00x", "4.00x")),
+            (second, third, ("1.00x", "n/a")),
+            (third, len(lines), ("1.00x", "1.00x")),
+        ):
+            ranked = [
+                line
+                for line in lines[start:end]
+                if line.startswith(
+                    (format_algorithm("bisect") + " ", format_algorithm("binary") + " ")
+                )
+            ]
+            self.assertEqual(len(ranked), 2)
+            self.assertTrue(
+                ranked[0].startswith(format_algorithm("bisect") + " ") or start == third
+            )
+            for line, ratio in zip(ranked, ratios):
+                self.assertTrue(line.endswith(ratio), line)
 
     def test_text_rankings_separate_result_contracts_and_timing_scopes(self):
         report = benchmark_report(
@@ -427,7 +552,9 @@ class CliTests(unittest.TestCase):
             ("parallel_warm", "1.00x"),
         ):
             with self.subTest(algorithm=algorithm):
-                line = next(line for line in lines if line.startswith(algorithm + " "))
+                line = next(
+                    line for line in lines if line.startswith(format_algorithm(algorithm) + " ")
+                )
                 self.assertTrue(line.endswith(expected_ratio), line)
         self.assertEqual(rendered.count("uniform, size 10:"), 4)
         self.assertIn("Result: first_index (first matching index or None)", rendered)
@@ -435,7 +562,118 @@ class CliTests(unittest.TestCase):
         self.assertIn("Timing scope: lookup_batch (sequential lookup", rendered)
         self.assertIn("cold pool; includes process startup and shutdown", rendered)
         self.assertIn("reused pool; excludes separately reported startup and shutdown", rendered)
-        self.assertIn("parallel_warm lifecycle (excluded from batch totals)", rendered)
+        self.assertIn(
+            format_algorithm("parallel_warm") + " lifecycle (excluded from batch totals)", rendered
+        )
+
+    def test_text_names_include_compatible_identifiers_and_align_columns(self):
+        # These legacy-shaped rows deliberately have no algorithm_label field.
+        report = benchmark_report(
+            report_row("radix", 100),
+            report_row("recursive", 200),
+            report_row("double_linear_recursive", 300),
+        )
+        rendered = render_report(report, "text")
+        labels = (
+            "Radix Binary Search (RBS) [radix]",
+            "Recursive binary search [recursive]",
+            "Recursive double-ended linear search [double_linear_recursive]",
+        )
+        positions = []
+        for label in labels:
+            self.assertIn(label, rendered)
+            line = next(line for line in rendered.splitlines() if line.startswith(label))
+            positions.append(line.index("complete"))
+        self.assertEqual(len(set(positions)), 1)
+
+    def test_colors_preserve_rankings_and_narrow_layout_preserves_every_metric(self):
+        report = benchmark_report(
+            report_row("radix", 100),
+            report_row("double_linear_recursive", 300),
+            report_row("bisect", 1, status="incomplete"),
+            report_row("linear", None, status="skipped"),
+        )
+        for width in (None, 40, 80, 120, 200):
+            with self.subTest(width=width):
+                plain = render_report(report, "text", width=width)
+                styled = render_report(report, "text", color=True, width=width)
+                self.assertIn("\x1b[", styled)
+                self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", styled), plain)
+                self.assertEqual(plain.count("[radix] *"), 1)
+                self.assertNotIn("[bisect] *", plain)
+                self.assertIn("1.00x", plain)
+                self.assertIn("3.00x", plain)
+                for field in (
+                    "setup med",
+                    "lookup med",
+                    "lookup IQR",
+                    "total med",
+                    "ns/query",
+                    "vs fastest",
+                ):
+                    self.assertIn(field, plain)
+                for algorithm in ("radix", "double_linear_recursive", "bisect", "linear"):
+                    self.assertIn(f"[{algorithm}]", plain)
+                if width:
+                    self.assertLessEqual(max(map(len, plain.splitlines())), width)
+
+    def test_color_flags_apply_to_text_but_never_to_machine_formats(self):
+        for mode in ("auto", "always", "never"):
+            for output_format in ("text", "json", "csv"):
+                with self.subTest(mode=mode, output_format=output_format):
+                    completed = self.run_cli(*SMALL_RUN, "--color", mode, "--format", output_format)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertEqual(completed.stderr, "")
+                    self.assertEqual(
+                        "\x1b[" in completed.stdout, mode == "always" and output_format == "text"
+                    )
+                    if output_format == "json":
+                        self.assertEqual(len(json.loads(completed.stdout)["results"]), 6)
+                    elif output_format == "csv":
+                        self.assertEqual(
+                            len(list(csv.DictReader(io.StringIO(completed.stdout)))), 6
+                        )
+
+    def test_footer_wraps_in_very_narrow_terminals(self):
+        report = benchmark_report(report_row("radix", 100))
+        for width in (12, 18, 20, 22):
+            for color in (False, True):
+                with self.subTest(width=width, color=color):
+                    text = render_report(report, "text", width=width, color=color)
+                    plain = re.sub(r"\x1b\[[0-9;]*m", "", text)
+                    self.assertLessEqual(max(map(len, plain.splitlines())), width)
+                    self.assertIn("READING THE RESULTS", " ".join(plain.split()))
+
+    def test_terminal_auto_layout_and_file_output_color_policy(self):
+        report = benchmark_report(report_row("radix", 100))
+        terminal = io.StringIO()
+        with (
+            patch("search_algos.cli.run_benchmarks", return_value=report),
+            patch("sys.stdout", terminal),
+            patch.object(terminal, "isatty", return_value=True),
+            patch("search_algos.console._enable_windows_ansi", return_value=True),
+            patch(
+                "search_algos.cli.shutil.get_terminal_size", return_value=os.terminal_size((80, 24))
+            ),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            self.assertEqual(main([]), 0)
+            styled = terminal.getvalue()
+            self.assertIn("\x1b[", styled)
+            self.assertIn("status:", styled)
+            self.assertLessEqual(
+                max(map(len, re.sub(r"\x1b\[[0-9;]*m", "", styled).splitlines())), 80
+            )
+            terminal.seek(0)
+            terminal.truncate()
+            with tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / "report.txt"
+                for mode in ("auto", "always", "never"):
+                    self.assertEqual(main(["--output", str(destination), "--color", mode]), 0)
+                    self.assertEqual(
+                        "\x1b[" in destination.read_text(encoding="utf-8"), mode == "always"
+                    )
+                self.assertEqual(terminal.getvalue(), "")
 
     def test_text_rankings_keep_distinct_workload_ids_separate(self):
         report = benchmark_report(
@@ -446,7 +684,9 @@ class CliTests(unittest.TestCase):
         self.assertIn("Workload: first-workload", rendered)
         self.assertIn("Workload: second-workload", rendered)
         for line in rendered.splitlines():
-            if line.startswith(("binary ", "bisect ")):
+            if line.startswith(
+                (format_algorithm("binary") + " ", format_algorithm("bisect") + " ")
+            ):
                 self.assertTrue(line.endswith("1.00x"), line)
 
     def test_text_rankings_exclude_incomplete_and_skipped_rows(self):
@@ -457,11 +697,13 @@ class CliTests(unittest.TestCase):
             report_row("set", 1, status="incomplete", result_kind="membership"),
         )
         lines = render_report(report, "text").splitlines()
-        complete = next(line for line in lines if line.startswith("binary "))
+        complete = next(line for line in lines if line.startswith(format_algorithm("binary") + " "))
         self.assertTrue(complete.endswith("1.00x"), complete)
         for algorithm in ("bisect", "linear", "set"):
             with self.subTest(algorithm=algorithm):
-                line = next(line for line in lines if line.startswith(algorithm + " "))
+                line = next(
+                    line for line in lines if line.startswith(format_algorithm(algorithm) + " ")
+                )
                 self.assertTrue(line.endswith("n/a"), line)
 
     def test_skipped_rows_are_explicit_in_text_json_and_csv(self):
@@ -511,10 +753,18 @@ class CliTests(unittest.TestCase):
             self.assertTrue(all(row["speedup"] == 1 for row in comparisons))
             for output_format in ("text", "csv"):
                 output = self.run_cli(
-                    "compare", str(source), str(source), "--format", output_format, script=True
+                    "compare",
+                    str(source),
+                    str(source),
+                    "--format",
+                    output_format,
+                    "--color",
+                    "always",
+                    script=True,
                 )
                 self.assertEqual(output.returncode, 0, output.stderr)
                 self.assertIn("binary", output.stdout)
+                self.assertEqual("\x1b[" in output.stdout, output_format == "text")
 
     def test_compare_reports_invalid_files_without_tracebacks(self):
         with tempfile.TemporaryDirectory() as directory:

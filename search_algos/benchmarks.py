@@ -29,10 +29,21 @@ from .algorithms import (
     jump_search,
     linear_search,
 )
+from .alternatives import (
+    binary_search_slicing,
+    build_sentinel_search,
+    double_linear_search,
+    double_linear_search_by_recursion,
+    fibonacci_search,
+    interpolation_search_by_recursion,
+    ternary_search,
+    ternary_search_by_recursion,
+)
 from .certified import build_certified_radix_index
 from .landmark import build_landmark_index
 from .measurement import gc_policy
 from .metadata import collect_metadata
+from .naming import ALGORITHM_LABELS, algorithm_label
 from .parallel import ParallelSearchPool, effective_worker_count, parallel_search_many
 from .prepared import (
     build_adaptive_index,
@@ -47,6 +58,16 @@ from .validation import (
     validate_selection,
 )
 
+ADDITIONAL_ALGORITHMS = (
+    "fibonacci",
+    "ternary",
+    "ternary_recursive",
+    "double_linear",
+    "double_linear_recursive",
+    "sentinel",
+    "interpolation_recursive",
+    "binary_slicing",
+)
 INDEX_ALGORITHMS: dict[str, Callable[[Sequence[int], int], int | None]] = {
     "linear": linear_search,
     "binary": binary_search,
@@ -56,16 +77,35 @@ INDEX_ALGORITHMS: dict[str, Callable[[Sequence[int], int], int | None]] = {
     "interpolation_hybrid": interpolation_search_hybrid,
     "exponential": exponential_search,
     "jump": jump_search,
+    "fibonacci": fibonacci_search,
+    "ternary": ternary_search,
+    "ternary_recursive": ternary_search_by_recursion,
+    "double_linear": double_linear_search,
+    "double_linear_recursive": double_linear_search_by_recursion,
+    "interpolation_recursive": interpolation_search_by_recursion,
 }
+MEMBERSHIP_ALGORITHMS: dict[str, Callable[[Sequence[int], int], bool]] = {
+    "binary_slicing": binary_search_slicing,
+}
+MEMBERSHIP_NAMES = ("set", *MEMBERSHIP_ALGORITHMS)
+# Slicing binary search copies O(n) elements per query on benchmark tuples.
+LINEAR_WORK_ALGORITHMS = (
+    "linear",
+    "double_linear",
+    "double_linear_recursive",
+    "sentinel",
+    "binary_slicing",
+)
 PREPARED_ALGORITHMS: dict[str, Callable[[Sequence[int]], Callable[[int], int | None]]] = {
     "neighbor_prepared": build_neighbor_index,
     "guarded_prepared": build_guarded_index,
     "adaptive_index": build_adaptive_index,
     "certified_radix": build_certified_radix_index,
     "landmark_index": build_landmark_index,
+    "sentinel": build_sentinel_search,
 }
 DEFAULT_ALGORITHMS = (
-    *INDEX_ALGORITHMS,
+    *(name for name in INDEX_ALGORITHMS if name != "linear" and name not in ADDITIONAL_ALGORITHMS),
     "set",
     "dict",
     "radix",
@@ -74,8 +114,11 @@ DEFAULT_ALGORITHMS = (
     "adaptive_index",
     "dict_reverse",
     "landmark_index",
+    *ADDITIONAL_ALGORITHMS,
 )
-ALGORITHM_NAMES = (*DEFAULT_ALGORITHMS, "certified_radix", "parallel", "parallel_warm")
+OPT_IN_ALGORITHMS = ("linear", "certified_radix", "parallel", "parallel_warm")
+# Keep the historical all-entry order independent of the default selection.
+ALGORITHM_NAMES = tuple(ALGORITHM_LABELS)
 DEFAULT_DATASETS = ("uniform", "gapped", "duplicates", "skewed")
 DATASET_NAMES = (*DEFAULT_DATASETS, "adversarial")
 
@@ -187,14 +230,14 @@ def verify_results(
     if len(results) != len(workload.targets):
         raise RuntimeError(f"{algorithm} returned the wrong number of results")
     for target, result, expected in zip(workload.targets, results, workload.expected_indices):
-        if algorithm == "set":
+        if algorithm in MEMBERSHIP_NAMES:
             correct = type(result) is bool and result == (expected is not None)
         else:
             correct = (result is None and expected is None) or (
                 type(result) is int and result == expected
             )
         if not correct:
-            expected_result = expected is not None if algorithm == "set" else expected
+            expected_result = expected is not None if algorithm in MEMBERSHIP_NAMES else expected
             raise RuntimeError(
                 f"{algorithm} returned {result!r} for {target!r}; expected {expected_result!r}"
             )
@@ -215,6 +258,10 @@ def _measure_batch(
             setup_ns = perf_counter_ns() - start
             start = perf_counter_ns()
             results = [target in membership for target in workload.targets]
+        elif algorithm in MEMBERSHIP_ALGORITHMS:
+            membership_search = MEMBERSHIP_ALGORITHMS[algorithm]
+            start = perf_counter_ns()
+            results = [membership_search(workload.values, target) for target in workload.targets]
         elif algorithm == "dict":
             start = perf_counter_ns()
             first_indices = build_first_index(workload.values)
@@ -289,12 +336,14 @@ def _summaries(samples: list[int], prefix: str) -> dict[str, float | None]:
 def _workload_measurements(workload: Workload, config: BenchmarkConfig) -> dict[str, _Measurements]:
     measurements = {name: _Measurements() for name in config.algorithms}
     linear_work = len(workload.values) * config.queries * (config.repetitions + config.warmups)
-    if "linear" in measurements and config.max_linear_work and linear_work > config.max_linear_work:
-        measurements["linear"].status = "skipped"
-        measurements["linear"].reason = (
-            f"estimated work {linear_work} exceeds max_linear_work {config.max_linear_work}; "
-            "use --max-linear-work 0 to disable this limit"
-        )
+    if config.max_linear_work and linear_work > config.max_linear_work:
+        for name in LINEAR_WORK_ALGORITHMS:
+            if name in measurements:
+                measurements[name].status = "skipped"
+                measurements[name].reason = (
+                    f"estimated work {linear_work} exceeds max_linear_work {config.max_linear_work}; "
+                    "use --max-linear-work 0 to disable this limit"
+                )
     pool: ParallelSearchPool | None = None
     try:
         for iteration in range(config.warmups + config.repetitions):
@@ -375,7 +424,10 @@ def run_benchmarks(config: BenchmarkConfig) -> dict[str, Any]:
                 records.append(
                     {
                         "algorithm": algorithm,
-                        "result_kind": "membership" if algorithm == "set" else "first_index",
+                        "algorithm_label": algorithm_label(algorithm),
+                        "result_kind": "membership"
+                        if algorithm in MEMBERSHIP_NAMES
+                        else "first_index",
                         "dataset": dataset,
                         "size": size,
                         "seed": config.seed,

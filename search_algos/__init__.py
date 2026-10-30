@@ -1,7 +1,7 @@
 """Quiet search functions and optional benchmarking utilities.
 
-Index searches return the first matching index, or ``None``. Set lookup
-returns a Boolean. Importing this package never starts workers or a benchmark.
+Index searches return the first matching index, or ``None``. Set lookup and
+slicing binary search return Booleans. Importing never starts workers or a benchmark.
 """
 
 from .algorithms import (
@@ -17,6 +17,17 @@ from .algorithms import (
     interpolation_search_hybrid,
     jump_search,
     linear_search,
+)
+from .alternatives import (
+    binary_search_slicing,
+    build_sentinel_search,
+    double_linear_search,
+    double_linear_search_by_recursion,
+    fibonacci_search,
+    interpolation_search_by_recursion,
+    sentinel_linear_search,
+    ternary_search,
+    ternary_search_by_recursion,
 )
 from .certified import build_certified_radix_index
 from .landmark import build_landmark_index
@@ -54,4 +65,13 @@ __all__ = [
     "build_first_index_reversed",
     "build_guarded_index",
     "build_adaptive_index",
+    "fibonacci_search",
+    "ternary_search",
+    "ternary_search_by_recursion",
+    "double_linear_search",
+    "double_linear_search_by_recursion",
+    "sentinel_linear_search",
+    "build_sentinel_search",
+    "interpolation_search_by_recursion",
+    "binary_search_slicing",
 ]

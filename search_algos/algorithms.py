@@ -25,7 +25,7 @@ C = TypeVar("C", bound=Comparable)
 
 
 def linear_search(input_list: Iterable[T], lookup_value: T) -> int | None:
-    """Return the first matching index; input need not be sorted.
+    """Linear (sequential) search for the first match; sorting is unnecessary.
 
     >>> linear_search([0, 15, 17, 20, 25], 20)
     3
@@ -40,7 +40,9 @@ def linear_search(input_list: Iterable[T], lookup_value: T) -> int | None:
 
 
 def binary_search(input_list: Sequence[C], lookup_value: C) -> int | None:
-    """Return the first matching index in an ascending sorted sequence.
+    """Lower-bound binary search with an equality check for the first match.
+
+    Input must be sorted ascending.
 
     >>> binary_search([0, 3, 5, 33, 44], 0)
     0
@@ -61,7 +63,9 @@ def binary_search(input_list: Sequence[C], lookup_value: C) -> int | None:
 
 
 def binary_search_std_lib(input_list: Sequence[C], lookup_value: C) -> int | None:
-    """Find the first match in an ascending sorted sequence using ``bisect``.
+    """Binary search using ``bisect_left`` and first-match equality verification.
+
+    Input must be sorted ascending.
 
     >>> binary_search_std_lib([0, 5, 7, 10, 15], 0)
     0
@@ -97,7 +101,7 @@ def binary_search_by_recursion(
     left: int = 0,
     right: int | None = None,
 ) -> int | None:
-    """Return the first matching index using a private recursive helper.
+    """Recursive binary search for the first match in ascending sorted input.
 
     Normally pass only the sequence and target. Optional legacy bounds are
     inclusive; the result is the first match within those bounds. Invalid bounds
@@ -126,7 +130,7 @@ def binary_search_by_recursion(
 
 
 def interpolation_search(input_list: Sequence[int | float], lookup_value: float) -> int | None:
-    """Return the first match in ascending sorted, finite numeric input.
+    """Interpolation search of ascending finite numbers, with numeric safeguards.
 
     Integers use exact arithmetic, including integers larger than a float can
     represent. Finite floats are supported; if probe arithmetic overflows or
@@ -168,7 +172,10 @@ def interpolation_search(input_list: Sequence[int | float], lookup_value: float)
 def interpolation_search_hybrid(
     input_list: Sequence[int | float], lookup_value: float
 ) -> int | None:
-    """Interpolate briefly, then use binary search if progress is too slow.
+    """Budgeted interpolation-binary search hybrid returning the first match.
+
+    This project variant switches after a probe budget; it does not alternate
+    interpolation and binary steps on every iteration.
 
     At most ``len(input_list).bit_length()`` interpolation probes are made.
     The binary fallback searches the remaining interval, preserving the first
@@ -268,7 +275,11 @@ def jump_search(input_list: Sequence[C], lookup_value: C) -> int | None:
 
 
 def build_radix_index(input_list: Sequence[int], *, bits: int = 12) -> Callable[[int], int | None]:
-    """Prepare a radix directory for repeated first-index integer lookups.
+    """Prepare Radix Binary Search (RBS) using a flat prefix directory.
+
+    This RBS variant constructs bucket boundaries with bisections. Lookup uses
+    the directory to bound a binary search; see docs/algorithm-names.md for
+    sources and terminology.
 
     Input must be sorted ascending and both values and lookup targets must be
     integers. These are preconditions: construction does not scan, validate, or
@@ -318,7 +329,7 @@ def build_radix_index(input_list: Sequence[int], *, bits: int = 12) -> Callable[
 
 
 def build_first_index(input_list: Iterable[H]) -> dict[H, int]:
-    """Build a hash index mapping each value to its first input position.
+    """Build a first-occurrence hash-table index mapping values to positions.
 
     Input need not be sorted, but values must be hashable. Construct this once
     and call ``index.get(target)`` for repeated first-index lookups.
@@ -335,7 +346,7 @@ def build_first_index(input_list: Iterable[H]) -> dict[H, int]:
 
 
 def find_by_dict(input_list: Iterable[H], lookup_value: H) -> int | None:
-    """Return the first match, building a hash index for this call.
+    """Hash-table lookup of the first index, building the table for this call.
 
     >>> find_by_dict([3, 1, 3, 2, 1], 1)
     1
@@ -345,7 +356,7 @@ def find_by_dict(input_list: Iterable[H], lookup_value: H) -> int | None:
 
 
 def find_by_sets(input_list: Iterable[H], lookup_value: H) -> bool:
-    """Return membership as a Boolean, building a set for this call.
+    """Hash-set membership lookup, building a set for this call.
 
     Items must be hashable. For repeated lookups, construct a set once and use
     ``target in prepared_set``; the benchmark measures that setup separately.

@@ -8,11 +8,15 @@ from unittest.mock import patch
 
 from search_algos.algorithms import build_radix_index
 from search_algos.benchmarks import (
+    ADDITIONAL_ALGORITHMS,
     ALGORITHM_NAMES,
     DATASET_NAMES,
     DEFAULT_ALGORITHMS,
     DEFAULT_DATASETS,
     INDEX_ALGORITHMS,
+    LINEAR_WORK_ALGORITHMS,
+    MEMBERSHIP_ALGORITHMS,
+    OPT_IN_ALGORITHMS,
     PREPARED_ALGORITHMS,
     BenchmarkConfig,
     Workload,
@@ -21,10 +25,11 @@ from search_algos.benchmarks import (
     verify_results,
 )
 from search_algos.comparison import compare_reports
+from search_algos.naming import ALGORITHM_LABELS
 from search_algos.prepared import build_first_index_reversed
 
 NEW_PREPARED_NAMES = ("neighbor_prepared", "dict_reverse", "guarded_prepared", "adaptive_index")
-ALL_PREPARED_NAMES = (*NEW_PREPARED_NAMES, "certified_radix", "landmark_index")
+ALL_PREPARED_NAMES = (*NEW_PREPARED_NAMES, "certified_radix", "landmark_index", "sentinel")
 
 
 class WorkloadTests(unittest.TestCase):
@@ -86,7 +91,6 @@ class WorkloadTests(unittest.TestCase):
 class BenchmarkTests(unittest.TestCase):
     def test_prepared_algorithms_are_selected_by_default_and_preserve_baselines(self):
         defaults = (
-            "linear",
             "binary",
             "bisect",
             "recursive",
@@ -100,14 +104,28 @@ class BenchmarkTests(unittest.TestCase):
         )
         self.assertEqual(DEFAULT_ALGORITHMS[: len(defaults)], defaults)
         self.assertEqual(
-            set(DEFAULT_ALGORITHMS), set(defaults + NEW_PREPARED_NAMES + ("landmark_index",))
+            set(DEFAULT_ALGORITHMS),
+            set(defaults + NEW_PREPARED_NAMES + ("landmark_index",) + ADDITIONAL_ALGORITHMS),
         )
-        self.assertEqual(len(DEFAULT_ALGORITHMS), 16)
+        self.assertEqual(len(DEFAULT_ALGORITHMS), 23)
+        self.assertNotIn("linear", DEFAULT_ALGORITHMS)
+        self.assertEqual(
+            OPT_IN_ALGORITHMS, ("linear", "certified_radix", "parallel", "parallel_warm")
+        )
+        self.assertEqual(set(OPT_IN_ALGORITHMS), set(ALGORITHM_NAMES) - set(DEFAULT_ALGORITHMS))
         self.assertEqual(BenchmarkConfig().algorithms, DEFAULT_ALGORITHMS)
         self.assertEqual(
-            ALGORITHM_NAMES, (*DEFAULT_ALGORITHMS, "certified_radix", "parallel", "parallel_warm")
+            ALGORITHM_NAMES,
+            (
+                "linear",
+                *(name for name in DEFAULT_ALGORITHMS if name not in ADDITIONAL_ALGORITHMS),
+                "certified_radix",
+                "parallel",
+                "parallel_warm",
+                *ADDITIONAL_ALGORITHMS,
+            ),
         )
-        self.assertEqual(len(ALGORITHM_NAMES), 19)
+        self.assertEqual(len(ALGORITHM_NAMES), 27)
         for name in (*defaults, *ALL_PREPARED_NAMES, "parallel", "parallel_warm"):
             with self.subTest(algorithm=name):
                 self.assertEqual(ALGORITHM_NAMES.count(name), 1)
@@ -116,6 +134,106 @@ class BenchmarkTests(unittest.TestCase):
                 self.assertEqual(DEFAULT_ALGORITHMS.count(name), 1)
                 self.assertNotIn(name, INDEX_ALGORITHMS)
                 self.assertEqual(BenchmarkConfig(algorithms=(name,)).algorithms, (name,))
+
+    def test_eight_additional_entries_are_defaults_and_validate_all_distributions(self):
+        self.assertEqual(len(ADDITIONAL_ALGORITHMS), 8)
+        self.assertTrue(set(ADDITIONAL_ALGORITHMS) <= set(DEFAULT_ALGORITHMS))
+        self.assertTrue(set(ADDITIONAL_ALGORITHMS) <= set(ALGORITHM_NAMES))
+        report = run_benchmarks(
+            BenchmarkConfig(
+                sizes=(0, 1, 40, 1000),
+                datasets=DATASET_NAMES,
+                algorithms=ADDITIONAL_ALGORITHMS,
+                queries=8,
+                warmups=1,
+                repetitions=2,
+                time_budget=0,
+            )
+        )
+        self.assertEqual(len(report["results"]), 4 * len(DATASET_NAMES) * 8)
+        for row in report["results"]:
+            with self.subTest(name=row["algorithm"], size=row["size"], dataset=row["dataset"]):
+                self.assertEqual(row["status"], "complete")
+                self.assertEqual(row["algorithm_label"], ALGORITHM_LABELS[row["algorithm"]])
+                expected_kind = (
+                    "membership" if row["algorithm"] == "binary_slicing" else "first_index"
+                )
+                self.assertEqual(row["result_kind"], expected_kind)
+                self.assertEqual(row["timing_scope"], "lookup_batch")
+                self.assertEqual(row["repetitions_completed"], 2)
+                self.assertEqual(row["warmups_completed"], 1)
+                if row["algorithm"] != "sentinel":
+                    self.assertEqual(row["setup_samples_ns"], [0, 0])
+        comparisons = compare_reports(report, report)["comparisons"]
+        self.assertEqual(len(comparisons), len(report["results"]))
+        self.assertTrue(all(row["status"] == "compared" for row in comparisons))
+
+    def test_all_entries_have_distinct_descriptive_labels_and_stable_identifiers(self):
+        self.assertEqual(set(ALGORITHM_LABELS), set(ALGORITHM_NAMES))
+        self.assertEqual(len(set(ALGORITHM_LABELS.values())), len(ALGORITHM_NAMES))
+        self.assertEqual(ALGORITHM_LABELS["radix"], "Radix Binary Search (RBS)")
+        self.assertEqual(ALGORITHM_LABELS["recursive"], "Recursive binary search")
+        self.assertEqual(BenchmarkConfig(algorithms=("linear",)).algorithms, ("linear",))
+        for name in ALGORITHM_NAMES:
+            self.assertNotEqual(ALGORITHM_LABELS[name], name)
+
+    def test_incorrect_additional_results_abort_benchmarks(self):
+        for name in ADDITIONAL_ALGORITHMS:
+            registry = (
+                PREPARED_ALGORITHMS
+                if name == "sentinel"
+                else MEMBERSHIP_ALGORITHMS
+                if name == "binary_slicing"
+                else INDEX_ALGORITHMS
+            )
+            # A Boolean is invalid for an index search, even when False == 0.
+            replacement = (
+                (lambda values: lambda target: False)
+                if name == "sentinel"
+                else (
+                    (lambda values, target: 0)
+                    if name == "binary_slicing"
+                    else (lambda values, target: False)
+                )
+            )
+            with (
+                self.subTest(name=name),
+                patch.dict(registry, {name: replacement}),
+                self.assertRaisesRegex(RuntimeError, f"{name} returned"),
+            ):
+                run_benchmarks(
+                    BenchmarkConfig(
+                        sizes=(1,),
+                        datasets=("uniform",),
+                        algorithms=(name,),
+                        queries=1,
+                        hit_rate=1,
+                        repetitions=1,
+                        warmups=0,
+                    )
+                )
+
+    def test_new_linear_work_limits_skip_before_preparation_and_allow_override(self):
+        names = tuple(name for name in LINEAR_WORK_ALGORITHMS if name != "linear")
+        options = dict(
+            sizes=(10,),
+            datasets=("uniform",),
+            algorithms=(*names, "fibonacci"),
+            queries=4,
+            warmups=1,
+            repetitions=2,
+            time_budget=0,
+        )
+        with patch.dict(PREPARED_ALGORITHMS, {"sentinel": lambda values: self.fail("prepared")}):
+            report = run_benchmarks(BenchmarkConfig(**options, max_linear_work=1))
+        for row in report["results"][:-1]:
+            self.assertEqual(row["status"], "skipped")
+            self.assertIn("max_linear_work", row["reason"])
+            self.assertEqual(row["setup_samples_ns"], [])
+            self.assertEqual(row["lookup_samples_ns"], [])
+        self.assertEqual(report["results"][-1]["status"], "complete")
+        unlimited = run_benchmarks(BenchmarkConfig(**options, max_linear_work=0))
+        self.assertTrue(all(row["status"] == "complete" for row in unlimited["results"]))
 
     def test_certified_radix_is_opt_in_and_preserves_the_default_selection(self):
         self.assertIn("certified_radix", PREPARED_ALGORITHMS)
@@ -400,6 +518,7 @@ class BenchmarkTests(unittest.TestCase):
         workload = make_workload(1, "uniform", queries=1, hit_rate=1)
         verify_results("binary", [0], workload)
         verify_results("set", [True], workload)
+        verify_results("binary_slicing", [True], workload)
         for algorithm, results in (("binary", [False]), ("set", [0]), ("binary", [])):
             with (
                 self.subTest(algorithm=algorithm, results=results),

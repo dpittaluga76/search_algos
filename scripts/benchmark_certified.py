@@ -18,6 +18,7 @@ import tracemalloc
 from collections.abc import Callable
 from pathlib import Path
 
+from scripts.study_sources import source_fingerprints
 from search_algos import build_first_index, build_first_index_reversed, build_radix_index
 from search_algos.benchmarks import (
     DEFAULT_ALGORITHMS,
@@ -160,16 +161,7 @@ def main() -> None:
         "allocations": [],
     }
     root = Path(__file__).resolve().parents[1]
-    study["source_sha256"] = {
-        path: hashlib.sha256((root / path).read_bytes()).hexdigest()
-        for path in (
-            "search_algos/algorithms.py",
-            "search_algos/prepared.py",
-            "search_algos/certified.py",
-            "search_algos/benchmarks.py",
-            "scripts/benchmark_certified.py",
-        )
-    }
+    study["source_sha256"] = source_fingerprints(root, "scripts/benchmark_certified.py")
     for seed_index, seed in enumerate(args.seeds):
         print(f"CLI distributions, seed {seed}", flush=True)
         algorithms = (*DEFAULT_ALGORITHMS, "certified_radix") if seed_index == 0 else FOCUSED
