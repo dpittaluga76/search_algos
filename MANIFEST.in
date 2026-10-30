@@ -1,0 +1,3 @@
+include search_algos.py
+include scripts/verify_release.py
+recursive-include tests *.py

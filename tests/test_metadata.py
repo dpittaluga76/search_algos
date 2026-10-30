@@ -11,6 +11,47 @@ from search_algos import metadata
 
 
 class MetadataTests(unittest.TestCase):
+    def test_inline_toml_comments_preserve_source_provenance(self):
+        cases = (
+            '[project] # package metadata\nname = "search-algos"\nversion = "0.3.0"\n',
+            '[project]\nname = "search-algos" # package name\nversion = "0.3.0"\n',
+            '[project]\nname = "search-algos"\nversion = "0.3.0" # source version\n',
+            "[project] # package metadata\nname = 'search-algos' # name\nversion = '0.3.0' # version\n",
+            "  [project] # package metadata\n  name = 'search-algos'\n\tversion = '0.3.0' # version\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            revision = "a" * 40
+            for document in cases:
+                with self.subTest(document=document):
+                    (root / "pyproject.toml").write_text(document, encoding="utf-8")
+                    with (
+                        patch.object(
+                            metadata, "__file__", str(root / "search_algos" / "metadata.py")
+                        ),
+                        patch.object(metadata, "_command", side_effect=[str(root), revision, ""]),
+                        patch.object(metadata, "_cpu_model", return_value=None),
+                        patch("importlib.metadata.version", return_value="0.2.0") as installed,
+                    ):
+                        report = metadata.collect_metadata()
+                        self.assertEqual(report["package_version"], "0.3.0")
+                        self.assertEqual(report["git_commit"], revision)
+                        self.assertIs(report["git_dirty"], False)
+                        installed.assert_not_called()
+
+    def test_source_version_does_not_come_from_another_table_or_comment(self):
+        documents = (
+            "[project] # package metadata\nname = 'search-algos'\n  [tool.example]\nversion = '99.0'\n",
+            "[project] # package metadata\nname = 'unrelated' # search-algos\nversion = '99.0'\n",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for document in documents:
+                with self.subTest(document=document):
+                    (root / "pyproject.toml").write_text(document, encoding="utf-8")
+                    self.assertIsNone(metadata._project_version(root))
+
     def test_source_version_takes_precedence_over_stale_installed_distribution(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

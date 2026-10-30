@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=(*ALGORITHM_NAMES, "all"),
         nargs="+",
         default=list(DEFAULT_ALGORITHMS),
-        help="algorithms to measure; all includes multiprocessing",
+        help="algorithms to measure; defaults include radix and prepared alternatives, including landmark_index; certified_radix is opt-in; all also includes certified_radix and multiprocessing",
     )
     parser.add_argument("--seed", type=int, default=0, help="workload seed")
     parser.add_argument("--repetitions", type=int, default=7, help="measured batches per algorithm")
@@ -121,15 +121,31 @@ def render_report(report: dict[str, Any], output_format: str) -> str:
         f"Python {metadata['python_version']} ({metadata['python_implementation']}) | {metadata['platform']}",
         f"Seed {config['seed']} | {config['repetitions']} measured batches | {config['queries']} queries/batch | {config['warmups']} warmups",
         "Batch times are milliseconds; IQR is the interquartile range of lookup times.",
-        "Set construction appears under setup; parallel lookup includes process startup and shutdown.",
+        "Set, dictionary, and radix-directory construction and other index preparation appear under setup; total includes per-batch setup and lookup.",
         f"Cyclic GC during measurement: {config.get('gc_mode', 'unspecified')}.",
-        "Each workload is listed separately; completed rows rank fastest to slowest by total median.",
+        "Rankings compare completed rows within the same workload, result kind, and timing scope.",
     ]
-    # Rows from different workloads are not comparable, so rank only within one.
-    groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    result_descriptions = {
+        "first_index": "first matching index or None",
+        "membership": "whether the target is present (True/False)",
+    }
+    scope_descriptions = {
+        "lookup_batch": "sequential lookup; total also includes per-batch setup",
+        "batch_with_process_startup": "cold pool; includes process startup and shutdown",
+        "batch_reused_pool": "reused pool; excludes separately reported startup and shutdown",
+    }
+    # Matching inputs alone do not make different result contracts or timing scopes comparable.
+    groups: dict[tuple[int, str, str, str, str], list[dict[str, Any]]] = {}
     for row in report["results"]:
-        groups.setdefault((row["size"], row["dataset"]), []).append(row)
-    for (size, dataset), rows in groups.items():
+        key = (
+            row["size"],
+            row["dataset"],
+            row["workload_id"],
+            row["result_kind"],
+            row["timing_scope"],
+        )
+        groups.setdefault(key, []).append(row)
+    for (size, dataset, workload_id, result_kind, timing_scope), rows in groups.items():
         rows = sorted(
             rows,
             key=lambda row: (
@@ -145,6 +161,9 @@ def render_report(report: dict[str, Any], output_format: str) -> str:
             [
                 "",
                 f"{dataset}, size {size}: {rows[0]['hits']} hits / {rows[0]['queries']} queries",
+                f"Workload: {workload_id}",
+                f"Result: {result_kind} ({result_descriptions.get(result_kind, 'custom result contract')})",
+                f"Timing scope: {timing_scope} ({scope_descriptions.get(timing_scope, 'custom timing scope')})",
                 f"{'algorithm':<22} {'status':<10} {'setup med':>12} {'lookup med':>12} {'lookup IQR':>12} {'total med':>12} {'ns/query':>12} {'vs fastest':>11}",
             ]
         )
@@ -174,7 +193,7 @@ def render_report(report: dict[str, Any], output_format: str) -> str:
     lines.extend(
         [
             "",
-            "ns/query is amortized lookup time; total includes per-batch setup. Incomplete/skipped rows are not ranked. Warm parallel totals exclude the separately reported pool lifecycle. JSON/CSV include raw samples and workload IDs.",
+            "ns/query is amortized lookup time. Rows rank by total median within each table; vs fastest is total / fastest complete total in that table (1.00x is fastest). Incomplete/skipped rows are not ranked. JSON/CSV include raw samples and workload IDs.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -210,7 +229,7 @@ def _compare_main(argv: list[str]) -> int:
             load_report(args.baseline), load_report(args.candidate), metric=args.metric
         )
         _write_output(render_comparison(compared, args.format), args.output)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(f"{parser.prog}: error: {error}", file=sys.stderr)
         return 1
     return 0
