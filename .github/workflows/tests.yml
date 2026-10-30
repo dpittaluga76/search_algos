@@ -62,5 +62,5 @@ jobs:
           name: coverage-${{ matrix.os }}-python-${{ matrix.python }}
           path: coverage.xml
           if-no-files-found: warn
-      - name: Build and verify the wheel outside the checkout in a clean environment
+      - name: Build source distribution and verify its wheel outside the checkout
         run: python scripts/verify_release.py

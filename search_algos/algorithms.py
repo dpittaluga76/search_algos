@@ -129,9 +129,10 @@ def interpolation_search(input_list: Sequence[int | float], lookup_value: float)
     """Return the first match in ascending sorted, finite numeric input.
 
     Integers use exact arithmetic, including integers larger than a float can
-    represent. Finite floats are supported; if probe arithmetic overflows, a
-    binary lookup provides a safe fallback. As with other sorted searches, the
-    caller is responsible for the input preconditions.
+    represent. Finite floats are supported; if probe arithmetic overflows or
+    mixed numeric subtraction rounds a nonzero span to zero, a binary lookup
+    provides a safe fallback. As with other sorted searches, the caller is
+    responsible for the input preconditions.
 
     >>> interpolation_search([0, 5, 7, 10, 15], 0)
     0
@@ -151,7 +152,7 @@ def interpolation_search(input_list: Sequence[int | float], lookup_value: float)
             break
         try:
             offset = int((lookup_value - lower) * (high - low) // (upper - lower))
-        except (OverflowError, ValueError):
+        except (OverflowError, ValueError, ZeroDivisionError):
             return binary_search_std_lib(input_list, lookup_value)
         # Floating point rounding must not produce an out-of-range probe.
         index = min(high, max(low, low + offset))
@@ -172,7 +173,9 @@ def interpolation_search_hybrid(
     At most ``len(input_list).bit_length()`` interpolation probes are made.
     The binary fallback searches the remaining interval, preserving the first
     match even when duplicate values precede an already-discovered match.
-    Input must be ascending and contain finite numeric values.
+    Input must be ascending and contain finite numeric values. Unsafe probe
+    arithmetic, including a mixed numeric span rounded to zero, also falls back
+    to binary search.
 
     >>> interpolation_search_hybrid([1, 2, 3, 4, 10**12], 4)
     3
@@ -194,7 +197,7 @@ def interpolation_search_hybrid(
         remaining_probes -= 1
         try:
             offset = int((lookup_value - lower) * (high - low) // (upper - lower))
-        except (OverflowError, ValueError):
+        except (OverflowError, ValueError, ZeroDivisionError):
             break
         index = min(high, max(low, low + offset))
         if input_list[index] < lookup_value:

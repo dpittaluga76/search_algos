@@ -117,8 +117,10 @@ class ParallelSearchPool:
     """Reuse fully initialized workers across batches over one fixed sequence.
 
     Entering the context eagerly starts all ``worker_count`` workers. An empty
-    sequence needs no workers. Startup readiness is bounded by 30 seconds, and
-    worker exceptions or abrupt exits propagate after pool cleanup. Startup and
+    sequence needs no workers. The startup readiness wait and initializer
+    barrier each use a 30-second timeout; joining workers during cleanup can
+    extend the total elapsed time. Running tasks are not forcibly terminated.
+    Worker exceptions or abrupt exits propagate after pool cleanup. Startup and
     shutdown are separate from ``search_many`` so benchmarks can report them
     separately from steady-state batches. Each batch still transfers its data.
 

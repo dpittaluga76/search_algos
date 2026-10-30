@@ -544,6 +544,16 @@ class CliTests(unittest.TestCase):
             self.assertIn("complete", completed.stderr)
             self.assertNotIn("Traceback", completed.stderr)
 
+    def test_compare_rejects_excessive_json_nesting_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "deep.json"
+            source.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+            completed = self.run_cli("compare", str(source), str(source))
+            self.assertEqual(completed.returncode, 1)
+            self.assertEqual(completed.stdout, "")
+            self.assertIn("JSON nesting is too deep", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

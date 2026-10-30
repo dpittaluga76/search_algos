@@ -26,6 +26,7 @@ class _Row:
     setup: list[float]
     lookup: list[float]
     gc_mode: str | None
+    queries: int | None
 
     @property
     def scenario(self) -> Scenario:
@@ -172,7 +173,10 @@ def _validate_report(
         gc_mode = data.get("gc_mode", config.get("gc_mode"))
         if gc_mode not in (None, "enabled", "disabled"):
             raise ValueError(f"{row_label} gc_mode must be enabled or disabled when specified")
-        rows[key] = _Row(data, identity, status, setup, lookup, gc_mode)
+        queries = _count(data, "queries", row_label, minimum=1)
+        if queries is None:
+            queries = config_counts["queries"]
+        rows[key] = _Row(data, identity, status, setup, lookup, gc_mode, queries)
     return metadata, rows
 
 
@@ -201,6 +205,10 @@ def load_report(path: Path) -> dict[str, Any]:
             parse_constant=_reject_constant,
             object_pairs_hook=_unique_object,
         )
+    except RecursionError as error:
+        raise ValueError(
+            f"Cannot read benchmark report {path}: JSON nesting is too deep"
+        ) from error
     except (OSError, UnicodeError, ValueError) as error:
         raise ValueError(f"Cannot read benchmark report {path}: {error}") from error
     if not isinstance(report, dict):
@@ -321,7 +329,10 @@ def compare_reports(
         conflicting_dimensions = []
         if before is not None and after is not None:
             for dimension in ("size", "queries"):
-                previous, current = before.data.get(dimension), after.data.get(dimension)
+                if dimension == "queries":
+                    previous, current = before.queries, after.queries
+                else:
+                    previous, current = before.data.get(dimension), after.data.get(dimension)
                 if previous is not None and current is not None and previous != current:
                     conflicting_dimensions.append(
                         f"{dimension} differs: {previous} versus {current}"

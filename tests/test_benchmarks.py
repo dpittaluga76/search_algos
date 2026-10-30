@@ -15,6 +15,7 @@ from search_algos.benchmarks import (
     INDEX_ALGORITHMS,
     PREPARED_ALGORITHMS,
     BenchmarkConfig,
+    Workload,
     make_workload,
     run_benchmarks,
     verify_results,
@@ -27,6 +28,20 @@ ALL_PREPARED_NAMES = (*NEW_PREPARED_NAMES, "certified_radix", "landmark_index")
 
 
 class WorkloadTests(unittest.TestCase):
+    def test_correctness_gate_rejects_truncated_or_extended_expected_results(self):
+        for expected in ((), (0, 0)):
+            with self.subTest(expected=expected):
+                workload = Workload((1,), (1,), expected, "custom-workload")
+                with self.assertRaisesRegex(RuntimeError, "one result per target"):
+                    verify_results("bisect", [999], workload)
+
+    def test_numeric_options_reject_unrepresentable_integers_as_validation_errors(self):
+        for field in ("time_budget", "hit_rate"):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                BenchmarkConfig(**{field: 10**400})
+        with self.assertRaisesRegex(ValueError, "hit_rate"):
+            make_workload(1, "uniform", hit_rate=10**400)
+
     def test_seed_reproduces_data_queries_and_identifier_without_global_rng_changes(self):
         state = random.getstate()
         first = make_workload(100, "gapped", seed=42)

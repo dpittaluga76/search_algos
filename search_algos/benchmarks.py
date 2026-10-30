@@ -182,6 +182,8 @@ def verify_results(
     algorithm: str, results: Sequence[int | bool | None], workload: Workload
 ) -> None:
     """Reject incorrect results outside the measured regions."""
+    if len(workload.expected_indices) != len(workload.targets):
+        raise RuntimeError("workload expected_indices must contain one result per target")
     if len(results) != len(workload.targets):
         raise RuntimeError(f"{algorithm} returned the wrong number of results")
     for target, result, expected in zip(workload.targets, results, workload.expected_indices):

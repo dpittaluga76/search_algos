@@ -162,6 +162,24 @@ class ComparisonTests(unittest.TestCase):
                 for dimension in dimensions:
                     self.assertIn(f"{dimension} differs", row["reason"])
 
+    def test_legacy_config_query_counts_participate_in_compatibility(self):
+        baseline = report()
+        del baseline["results"][0]["queries"]
+        baseline["config"]["queries"] = 100
+        for config_only in (False, True):
+            candidate = report(queries=100000)
+            if config_only:
+                del candidate["results"][0]["queries"]
+                candidate["config"]["queries"] = 100000
+            with self.subTest(config_only=config_only):
+                row = compare_reports(baseline, candidate)["comparisons"][0]
+                self.assertEqual(row["status"], "incomparable")
+                self.assertIsNone(row["speedup"])
+                self.assertIn("queries differs: 100 versus 100000", row["reason"])
+        matching = report(queries=100)
+        self.assertEqual(compare_reports(baseline, matching)["comparisons"][0]["speedup"], 1)
+        self.assertNotIn("queries", baseline["results"][0])
+
     def test_empty_workloads_self_compare_without_collapsing_dataset_rows(self):
         generated = run_benchmarks(
             BenchmarkConfig(
@@ -441,6 +459,13 @@ class ComparisonTests(unittest.TestCase):
                     load_report(path)
             with self.assertRaises(ValueError):
                 load_report(Path(directory) / "missing.json")
+
+    def test_load_report_rejects_excessive_json_nesting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nested.json"
+            path.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "JSON nesting is too deep"):
+                load_report(path)
 
 
 if __name__ == "__main__":

@@ -76,4 +76,4 @@ python -m scripts.benchmark_landmark
 python -m scripts.confirm_landmark
 ```
 
-The original exploration candidates are retained under `candidates/`. The paired-directory variant is unselected and was not used for the reported production measurements. All changes remain uncommitted.
+The original exploration candidates are retained under `candidates/`. The paired-directory variant is unselected and was not used for the reported production measurements. The study metadata records the working tree before these changes were committed; it is historical provenance, not the current repository status.

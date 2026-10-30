@@ -12,7 +12,11 @@ def validate_integer(name: str, value: object, minimum: int = 0) -> None:
 def validate_number(name: str, value: object, maximum: float | None = None) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite nonnegative number")
-    if not math.isfinite(value) or value < 0 or (maximum is not None and value > maximum):
+    try:
+        finite = math.isfinite(value)
+    except OverflowError as error:
+        raise ValueError(f"{name} must fit in a finite floating-point number") from error
+    if not finite or value < 0 or (maximum is not None and value > maximum):
         limit = f" between 0 and {maximum:g}" if maximum is not None else " >= 0"
         raise ValueError(f"{name} must be finite and{limit}")
 

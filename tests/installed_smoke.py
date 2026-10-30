@@ -28,8 +28,10 @@ PREPARED_ALGORITHMS = (
 
 
 class InstalledWheelTests(unittest.TestCase):
-    def run_command(self, *arguments, module=False):
-        if module:
+    def run_command(self, *arguments, module=False, script=False):
+        if script:
+            command = [sys.executable, "-I", str(Path.cwd() / "search_algos.py")]
+        elif module:
             command = [sys.executable, "-I", "-m", "search_algos"]
         else:
             executable = "search-algos.exe" if os.name == "nt" else "search-algos"
@@ -96,6 +98,33 @@ class InstalledWheelTests(unittest.TestCase):
         reversed_index = search_algos.build_first_index_reversed(iter([3, 1, 3]))
         self.assertEqual(reversed_index, {3: 0, 1: 1})
         self.assertIsNone(reversed_index.get(9))
+
+    def test_source_archive_compatibility_script(self):
+        output = self.run_command(
+            "--size",
+            "10",
+            "--datasets",
+            "duplicates",
+            "--algorithms",
+            "all",
+            "--workers",
+            "2",
+            "--queries",
+            "4",
+            "--repetitions",
+            "1",
+            "--warmups",
+            "0",
+            "--time-budget",
+            "0",
+            "--format",
+            "json",
+            script=True,
+        )
+        report = json.loads(output)
+        self.assertEqual(len(report["results"]), 19)
+        self.assertTrue(all(row["status"] == "complete" for row in report["results"]))
+        self.assertEqual({row["hits"] for row in report["results"]}, {2})
 
     def test_console_json_export_and_module_comparison(self):
         report_path = Path.cwd() / "installed report.json"

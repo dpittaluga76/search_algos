@@ -1,6 +1,7 @@
 """Optional display/profiling helpers, separate from the search algorithms."""
 
 import cProfile
+import sys
 from collections.abc import Callable
 from functools import wraps
 from time import perf_counter
@@ -35,10 +36,17 @@ def show_runtime_and_result(func: Callable[P, SearchResult]) -> Callable[P, Sear
 
 
 def profile_this(func: Callable[P, R]) -> Callable[P, R]:
-    """Profile one complete call, restoring profiler state even on failure."""
+    """Profile a complete call without replacing an existing profiling session.
+
+    If a profiler is already active, execute the function under that profiler
+    and leave its statistics/reporting to its owner. Otherwise print this call's
+    profile and disable the temporary profiler even when the function raises.
+    """
 
     @wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        if sys.getprofile() is not None:
+            return func(*args, **kwargs)
         profiler = cProfile.Profile()
         profiler.enable()
         try:

@@ -264,7 +264,9 @@ fields; any supplied counts are still checked for consistency.
 Rows match by workload identifier, algorithm, result kind, and timing scope.
 If identical workloads appear under multiple scenario labels, dataset and size
 disambiguate those rows without merging their samples. Conflicting known size
-or query counts make a matched pair incomparable.
+or query counts make a matched pair incomparable. For legacy reports that omit
+per-row query counts, a count supplied in `config.queries` still participates in
+that compatibility check.
 The speed ratio is **baseline / candidate**: values above 1 mean the candidate
 is faster. Missing, skipped, or incomplete rows are reported explicitly. Known
 GC policies must agree; an unavailable policy in an older report produces a
@@ -549,12 +551,16 @@ the separate alternatives when tuning a workload.
 Plain interpolation remains available to demonstrate distribution-sensitive
 performance. The hybrid attempts at most `len(input_list).bit_length()`
 interpolation probes before searching the remaining interval with binary search.
+Both interpolation variants also fall back to bounded binary search when numeric
+arithmetic overflows or a mixed integer/float span rounds to zero.
 
 The optional `show_runtime_and_result` and `profile_this` decorators remain
 available from `search_algos`. They return the wrapped function's result; search functions
 are not decorated automatically. Timing a recursive search therefore surrounds
 the complete call once. Result formatting distinguishes indices, missing values,
 and Boolean membership results.
+If another profiler is already active, `profile_this` leaves that session intact
+and delegates statistics and reporting to its owner.
 
 ## Multiprocessing API
 
@@ -738,14 +744,18 @@ statement and branch coverage score. Coverage-instrumented test timings are not
 performance measurements. The wheel ships a `py.typed` marker for downstream
 type checkers.
 
-`python scripts/verify_release.py` builds a wheel and installs it into a fresh
-temporary virtual environment. It runs from outside the source checkout, clears
+`python scripts/verify_release.py` builds a source distribution, then builds its
+wheel from that archive and installs it into a fresh temporary virtual environment.
+It checks that the archive includes the compatibility launcher, complete test
+sources, and release verifier. It runs from outside the source checkout, clears
 Python import-path overrides, and verifies that imports come from the installed
 package. Checks cover the public API, installed `py.typed` marker, console and
-module commands, JSON and CSV exports, saved-report comparison, and spawned
-workers. Temporary build and test files are cleaned up when the check finishes.
-Building requires access to the build dependencies declared in `pyproject.toml`,
-either from the package index or a configured local cache.
+module commands, the shipped compatibility launcher with all algorithms, JSON
+and CSV exports, saved-report comparison, and spawned workers. Temporary build
+and test files are cleaned up when the check finishes. Building requires access
+to the `build` frontend and dependencies declared in `pyproject.toml`, either
+from the package index or a configured local cache. Build tools are installed in
+a temporary builder environment; they are not runtime dependencies.
 
 The suite includes doctests, small-input correctness checks, boundary and
 duplicate cases, seeded larger-input checks against `bisect`, multiprocessing
