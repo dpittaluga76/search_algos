@@ -95,6 +95,17 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare_reports(report([1e308], setup=[1e308]), report())
 
+    def test_subnormal_samples_round_after_interpolation(self):
+        compared = compare_reports(report([5e-324, 1e-323]), report([1e-323, 1e-323]))
+        row = compared["comparisons"][0]
+        self.assertEqual(row["baseline_median_ns"], 1e-323)
+        self.assertEqual(row["speedup"], 1)
+        row = compare_reports(report([5e-324, 1.5e-323]), report([5e-324, 5e-324]))["comparisons"][
+            0
+        ]
+        self.assertEqual((row["baseline_q1_ns"], row["baseline_q3_ns"]), (1e-323, 1e-323))
+        self.assertFalse(row["iqr_overlap"])
+
     def test_identity_includes_algorithm_result_kind_and_timing_scope(self):
         for field, value in (
             ("algorithm", "set"),
@@ -204,6 +215,34 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(row["status"], "incomparable")
         self.assertIn("GC policies differ", row["reason"])
         self.assertIsNone(row["speedup"])
+
+    def test_gc_policy_must_be_valid_and_consistent_with_config(self):
+        for version in (1, 2):
+            candidate = report(version=version, gc_mode="disabled")
+            candidate["config"]["gc_mode"] = "enabled"
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "gc_mode conflicts with config"):
+                    compare_reports(report(), candidate)
+            for invalid in (True, "sometimes", 0, {}, []):
+                candidate["config"]["gc_mode"] = invalid
+                with self.subTest(version=version, invalid=invalid):
+                    with self.assertRaisesRegex(ValueError, "config gc_mode"):
+                        compare_reports(report(), candidate)
+            candidate["config"]["gc_mode"] = "disabled"
+            self.assertEqual(compare_reports(candidate, candidate)["comparisons"][0]["speedup"], 1)
+
+    def test_load_report_rejects_exponent_overflow_outside_timing_samples(self):
+        for location in ("metadata", "config"):
+            for numeric in ("1e999", "-1e999"):
+                candidate = report()
+                candidate[location]["custom_measurement"] = "overflow-placeholder"
+                document = json.dumps(candidate).replace('"overflow-placeholder"', numeric)
+                with tempfile.TemporaryDirectory() as directory:
+                    source = Path(directory) / "overflow.json"
+                    source.write_text(document, encoding="utf-8")
+                    with self.subTest(location=location, numeric=numeric):
+                        with self.assertRaisesRegex(ValueError, "finite floating-point range"):
+                            load_report(source)
 
     def test_legacy_unknown_gc_warns_but_comparison_remains_available(self):
         compared = compare_reports(report(), report(version=2))
@@ -460,12 +499,23 @@ class ComparisonTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_report(Path(directory) / "missing.json")
 
-    def test_load_report_rejects_excessive_json_nesting(self):
+    def test_load_report_rejects_deeply_nested_non_object_input(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "nested.json"
             path.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "JSON nesting is too deep"):
+            # Decoder nesting limits vary by Python version. Either decoding
+            # fails or the decoded array is rejected as a non-object report.
+            with self.assertRaises(ValueError) as error:
                 load_report(path)
+            self.assertIn(str(path), str(error.exception))
+
+    def test_load_report_normalizes_decoder_recursion_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            path.write_text("{}", encoding="utf-8")
+            with patch("search_algos.comparison.json.loads", side_effect=RecursionError):
+                with self.assertRaisesRegex(ValueError, "JSON nesting is too deep"):
+                    load_report(path)
 
 
 if __name__ == "__main__":

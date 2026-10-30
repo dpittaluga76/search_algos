@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import unittest
+from collections import deque
 from importlib.metadata import distribution
 from pathlib import Path
 
@@ -98,6 +99,10 @@ class InstalledWheelTests(unittest.TestCase):
         reversed_index = search_algos.build_first_index_reversed(iter([3, 1, 3]))
         self.assertEqual(reversed_index, {3: 0, 1: 1})
         self.assertIsNone(reversed_index.get(9))
+        self.assertEqual(
+            search_algos.parallel_search_many(deque([1, 3, 3, 8]), [3, 8, 9], workers=2),
+            [1, 3, None],
+        )
 
     def test_source_archive_compatibility_script(self):
         output = self.run_command(

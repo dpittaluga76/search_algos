@@ -8,9 +8,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from search_algos.benchmarks import ALGORITHM_NAMES
-from search_algos.cli import render_report
+from search_algos.cli import main, render_report
 
 ROOT = Path(__file__).resolve().parents[1]
 PREPARED_ALGORITHMS = (
@@ -551,8 +552,26 @@ class CliTests(unittest.TestCase):
             completed = self.run_cli("compare", str(source), str(source))
             self.assertEqual(completed.returncode, 1)
             self.assertEqual(completed.stdout, "")
-            self.assertIn("JSON nesting is too deep", completed.stderr)
+            self.assertIn("error:", completed.stderr)
+            self.assertIn("deep.json", completed.stderr)
             self.assertNotIn("Traceback", completed.stderr)
+
+    def test_compare_reports_encoding_recursion_without_traceback(self):
+        report = benchmark_report(report_row("bisect", 1))
+        report["schema_version"] = 1
+        report["results"][0].update(setup_samples_ns=[0], lookup_samples_ns=[1])
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            patch("search_algos.comparison.load_report", return_value=report),
+            patch("search_algos.comparison.json.dumps", side_effect=RecursionError),
+            patch("sys.stdout", stdout),
+            patch("sys.stderr", stderr),
+        ):
+            status = main(["compare", "before.json", "after.json", "--format", "json"])
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("error:", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
 
 if __name__ == "__main__":

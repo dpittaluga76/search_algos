@@ -229,7 +229,7 @@ def _compare_main(argv: list[str]) -> int:
             load_report(args.baseline), load_report(args.candidate), metric=args.metric
         )
         _write_output(render_comparison(compared, args.format), args.output)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(f"{parser.prog}: error: {error}", file=sys.stderr)
         return 1
     return 0

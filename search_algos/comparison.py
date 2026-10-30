@@ -137,6 +137,9 @@ def _validate_report(
         field: _count(config, field, f"{label} config", minimum=minimum)
         for field, minimum in (("queries", 1), ("repetitions", 1), ("warmups", 0))
     }
+    configured_gc = config.get("gc_mode")
+    if configured_gc not in (None, "enabled", "disabled"):
+        raise ValueError(f"{label} config gc_mode must be enabled or disabled when specified")
     results = report.get("results")
     if not isinstance(results, list):
         raise ValueError(f"{label} results must be a list")
@@ -173,6 +176,8 @@ def _validate_report(
         gc_mode = data.get("gc_mode", config.get("gc_mode"))
         if gc_mode not in (None, "enabled", "disabled"):
             raise ValueError(f"{row_label} gc_mode must be enabled or disabled when specified")
+        if gc_mode is not None and configured_gc is not None and gc_mode != configured_gc:
+            raise ValueError(f"{row_label} gc_mode conflicts with config")
         queries = _count(data, "queries", row_label, minimum=1)
         if queries is None:
             queries = config_counts["queries"]
@@ -182,6 +187,13 @@ def _validate_report(
 
 def _reject_constant(value: str) -> Any:
     raise ValueError(f"nonfinite JSON number {value} is not supported")
+
+
+def _finite_float(value: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("JSON number exceeds finite floating-point range")
+    return result
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -203,6 +215,7 @@ def load_report(path: Path) -> dict[str, Any]:
         report = json.loads(
             path.read_text(encoding="utf-8"),
             parse_constant=_reject_constant,
+            parse_float=_finite_float,
             object_pairs_hook=_unique_object,
         )
     except RecursionError as error:
@@ -226,13 +239,21 @@ def _summary(row: _Row | None, metric: str) -> tuple[float | None, float | None,
     samples = sorted(samples)
     lower_middle = samples[(len(samples) - 1) // 2]
     upper_middle = samples[len(samples) // 2]
-    median = lower_middle + (upper_middle - lower_middle) / 2
+    middle_sum = lower_middle + upper_middle
+    median = (
+        middle_sum / 2
+        if math.isfinite(middle_sum)
+        else lower_middle + (upper_middle - lower_middle) / 2
+    )
     if len(samples) < 2:
         return median, None, None
 
     def quartile(numerator: int) -> float:
         index, remainder = divmod((len(samples) - 1) * numerator, 4)
         lower, upper = samples[index], samples[min(index + 1, len(samples) - 1)]
+        weighted_sum = lower * (4 - remainder) + upper * remainder
+        if math.isfinite(weighted_sum):
+            return weighted_sum / 4
         return lower + (upper - lower) * (remainder / 4)
 
     return median, quartile(1), quartile(3)

@@ -260,6 +260,9 @@ A `complete` row must contain all requested measured batches and warmups. An
 counts. Inconsistent reports are rejected with an error identifying the affected
 row, rather than producing a speed ratio. Schema 1 reports may omit these count
 fields; any supplied counts are still checked for consistency.
+JSON floating-point numbers must remain finite, including numbers in metadata
+and configuration fields. A configured GC policy must be valid and agree with
+each row's known policy; contradictory measurement conditions are rejected.
 
 Rows match by workload identifier, algorithm, result kind, and timing scope.
 If identical workloads appear under multiple scenario labels, dataset and size
@@ -318,6 +321,10 @@ or perform a separate ordering-validation pass. For nonconstant input,
 `build_certified_radix_index` scans the values to verify the local properties
 needed by its shortcuts; this preparation is included in its setup measurement.
 This scan does not validate the sorted-integer input contract.
+For custom objects, ordering must agree with equality: objects that tie under
+sorting must compare equal with `==`. For records sorted by only one field,
+search a corresponding sequence of keys, or use `linear_search` when matching
+the complete object by equality.
 Use the two-argument recursive search API to let it manage its bounds. Explicit
 `left` and `right` bounds remain available; `right` is inclusive and both bounds
 must describe a valid search range. Within a bounded search, the result is the
@@ -609,6 +616,10 @@ joins them. A reused pool retains workers, not preloaded input: each task still
 transfers its chunk and assigned targets. Do not mutate the input during pool
 use. `disable_gc=True` controls cyclic GC inside worker searches; the default
 for direct API calls is `False`. Each worker restores its previous GC state.
+Ordinary containers such as lists and tuples transfer native slices. Other
+sequence containers, including `deque` and `memoryview`, transfer indexed chunks
+as plain lists. The input container itself need not be pickleable in that case;
+transferred elements, targets, and custom search functions must be pickleable.
 
 The legacy `multiproc_test(func, lst_size, seq, tgt, cpu_cnt)` entry point remains
 available and now returns a global index or `None`. It rejects a `lst_size` that
