@@ -33,7 +33,7 @@ Issues = "https://github.com/dpittaluga76/search_algos/issues"
 
 [project.optional-dependencies]
 dev = [
-    "ruff==0.17.3",
+    "ruff==0.17.4",
     "mypy==2.4.1",
     "coverage==7.16.2",
 ]
